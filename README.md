@@ -52,14 +52,31 @@ streamlit run src/app.py
 4. Download the optimized file
 5. Upload to Amazon Seller Central
 
+## Environment Profiles
+
+Runtime profiles are supported for `local`, `dev`, and `prod`.
+
+- Default profile: `local`
+- Override with env var: `APP_ENV=dev` (or `prod`)
+- CLI override: `--env local|dev|prod`
+
+Profile files are in `config/profiles/`.
+
 ## CLI Mode
 
 You can run the optimizer from terminal without Streamlit.
 
-### Basic Command
+### Basic Commands
 
 ```bash
+# Single file mode
 python -m src.cli --input "path/to/bulk-file.xlsx"
+
+# Batch mode (all matching files in a folder)
+python -m src.cli --input-dir "data/samples" --pattern "*.xlsx"
+
+# Run under a specific profile
+python -m src.cli --env dev --input "path/to/bulk-file.xlsx"
 ```
 
 ### Common Commands
@@ -77,6 +94,9 @@ python -m src.cli --input "bulk.xlsx" --disable-48hr-rule
 # Skip NLP phase for faster runs
 python -m src.cli --input "bulk.xlsx" --skip-nlp
 
+# Batch mode with recursive search and fail-fast behavior
+python -m src.cli --input-dir "data/samples" --pattern "*bulk*.xlsx" --recursive --fail-fast
+
 # Tune NLP clustering and negative keyword thresholds
 python -m src.cli --input "bulk.xlsx" --n-clusters 8 --min-cluster-size 10 --negative-keyword-min-spend 15 --negative-keyword-max-acos 1.2
 
@@ -86,15 +106,32 @@ python -m src.cli --help
 
 ### CLI Outputs
 
-By default, CLI writes files into `outputs/`:
+By default, CLI writes per-file outputs into `outputs/`:
 - Amazon upload-ready Excel
 - Full analysis Excel
 - Markdown optimization report
 - Optimization log (`.txt`)
 - Negative product targets Excel (unless `--skip-nlp`)
 - Negative keywords Excel (unless `--skip-nlp`)
+- Batch summary CSV (only when using `--input-dir`)
+- Persistent run history CSV (`outputs/run_history.csv`) for UI/CLI comparison tracking
 
 CLI also prints per-stage runtime timings at the end of each run.
+
+The Streamlit UI includes a **Historical Run Tracking** panel to compare the latest successful run against the previous one.
+Basic drift alerts are also shown when key metrics deviate materially from recent successful runs.
+
+## Docker Deployment
+
+```bash
+# Build and run with default (prod) profile
+docker compose up --build
+
+# Run with a specific profile
+APP_ENV=dev docker compose up --build
+```
+
+Use `env/*.env.example` as templates for environment files.
 
 ## Configuration
 
@@ -214,7 +251,14 @@ Possible reasons:
 src/
 ├── app.py          # Streamlit UI
 ├── cli.py          # Command-line interface
-└── optimizer.py    # Optimization logic
+├── optimizer.py    # Optimization logic
+├── run_history.py  # Historical tracking + drift checks
+└── settings.py     # Runtime profile loader
+config/
+└── profiles/       # local/dev/prod runtime profiles
+env/                # Environment file templates
+Dockerfile          # Container runtime definition
+docker-compose.yml  # Container orchestration
 tests/              # Pytest suite (active)
 data/
 └── samples/        # Local sample input files (gitignored by default)
@@ -276,6 +320,6 @@ For issues or questions:
 
 **Built with**: Python, Streamlit, Pandas, NumPy, Openpyxl, sentence-transformers, scikit-learn, PyTorch
 
-**Version**: 4.0 (NLP Intelligence - Phase 3)
+**Version**: 4.1 (P2 Scale + P3 Packaging)
 
-**Last Updated**: 2026-02-11
+**Last Updated**: 2026-02-24

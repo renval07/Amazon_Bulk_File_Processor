@@ -26,10 +26,13 @@ Use this checklist before your initial GitHub release/public push.
 
 - [ ] Run tests: `python -m pytest tests/`
 - [ ] Run CLI smoke test:
-  - `python -m src.cli --input "data/samples/<sample>.xlsx" --output-dir "outputs/release_smoke" --skip-nlp`
+  - `python -m src.cli --env local --input "data/samples/<sample>.xlsx" --output-dir "outputs/release_smoke" --skip-nlp`
 - [ ] Run UI smoke test:
-  - `streamlit run src/app.py`
+  - `APP_ENV=local streamlit run src/app.py`
   - Upload a sample file and verify key downloads are generated.
+- [ ] Run container smoke test:
+  - `docker compose up --build`
+  - Verify UI responds on configured port and writes outputs/history.
 
 ## Optional (When GitHub Hosted)
 

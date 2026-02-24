@@ -12,11 +12,16 @@ It ingests Amazon bulk Excel files, applies bid optimization and bleeder detecti
 - Main app: Streamlit UI with end-to-end workflow and 6 download outputs.
 - Core engine: `src/optimizer.py` (`BulkOptimizer` class).
 - Tests: pytest-based suite in `tests/` with legacy script runners archived.
+- Automation: CLI supports both single-file and batch folder processing with summary export.
+- CI: GitHub Actions workflow runs pytest on push/PR.
+- Deployment: Dockerized runtime and environment profiles (`local`/`dev`/`prod`) are implemented.
 
 ## Key Files
 - `src/app.py`: Streamlit UI, orchestrates full pipeline and download generation.
 - `src/cli.py`: Command-line entrypoint for non-UI and automation workflows.
 - `src/optimizer.py`: all optimization/analysis logic.
+- `src/settings.py`: runtime profile loader (`APP_ENV` + profile files).
+- `src/run_history.py`: persistent run history and drift alert logic.
 - `README.md`: user-level overview and run instructions.
 - `ROADMAP.md`: authoritative project roadmap and milestone log.
 - `tests/`: active pytest suite for automated validation.
@@ -38,8 +43,11 @@ It ingests Amazon bulk Excel files, applies bid optimization and bleeder detecti
    - Amazon upload Excel (clean sheets)
    - Full analysis Excel (reports included)
    - Markdown analysis report
+   - Optimization log text
    - Negative product targets Excel
    - Negative keywords Excel
+10. In CLI batch mode, writes a batch summary CSV with per-file outcomes.
+11. Records run history and checks drift against recent successful baseline.
 
 ## Implemented Features (Code-Verified)
 - RPC-based bid optimization (`optimize_bids`)
@@ -76,11 +84,10 @@ From `requirements.txt`:
 - Advanced optimization thresholds are configurable from Streamlit sidebar (`Advanced Thresholds`).
 
 ## Gaps / Risks To Address Next
-- CI is not yet configured (deferred until repository is hosted).
-- Large-file performance and model-loading latency are potential bottlenecks.
-- Documentation drift exists across markdown files; should be consolidated.
+- Large-file performance and model-loading latency remain potential bottlenecks.
+- Drift thresholds are currently static and may need tuning per account size.
 
 ## Suggested Immediate Next Sprint
-1. Complete remaining parity migration from legacy script tests into pytest.
-2. Add run-level timing/performance metrics.
-3. Add CI once repository hosting is in place.
+1. Add lightweight observability for memory/runtime on large batch runs.
+2. Add richer trend visualizations for historical run comparisons.
+3. Tune drift alert sensitivity and allow per-account overrides.

@@ -11,11 +11,18 @@ All notable changes to this project are documented in this file.
 - Advanced configurable thresholds in Streamlit sidebar and optimizer wiring.
 - Pytest-based automated suite under `tests/`.
 - GitHub collaboration files: `LICENSE`, `CONTRIBUTING.md`, PR template.
+- CLI batch mode: `--input-dir`, `--pattern`, `--recursive`, `--fail-fast`.
+- Run history tracking (`outputs/run_history.csv`) with UI comparison panel.
+- Drift alerts for model-dependent metrics (clusters, negative recommendations, Type B bleeders).
+- Runtime profile system (`local`/`dev`/`prod`) in `config/profiles`.
+- Container packaging via `Dockerfile` and `docker-compose.yml`.
+- Deployment guide `docs/DEPLOYMENT.md` and env templates in `env/*.env.example`.
 
 ### Changed
 - Reorganized repository layout for GitHub readiness (`docs/`, `data/samples/`, archived legacy docs/tests).
 - Pinned runtime dependencies in `requirements.txt`.
 - Added `requirements-dev.txt` and `pytest.ini`.
+- CLI and UI now honor runtime profile defaults and history paths.
 
 ### Archived
 - Legacy script-style test runners moved to `archive/tests_legacy/`.

@@ -44,18 +44,20 @@ Exit Criteria:
 - Users can export logs and see processing bottlenecks
 
 ### P2 - Scale and Multi-Account Operations (Later)
-- [ ] Batch process multiple bulk files in one run
-- [ ] Historical run tracking and comparison dashboard
-- [ ] Basic drift monitoring on model-dependent outputs
+- Status: Complete (2026-02-24)
+- [x] Batch process multiple bulk files in one run
+- [x] Historical run tracking and comparison dashboard
+- [x] Basic drift monitoring on model-dependent outputs
 
 Exit Criteria:
 - Multi-account workflows require minimal manual repetition
 - Trends and run-over-run results are visible
 
 ### P3 - Deployment and Packaging (Later)
-- [ ] Dockerized runtime for consistent deployment
-- [ ] Environment profiles (local/dev/prod)
-- [ ] Release checklist + versioned changelog
+- Status: Complete (2026-02-24)
+- [x] Dockerized runtime for consistent deployment
+- [x] Environment profiles (local/dev/prod)
+- [x] Release checklist + versioned changelog
 
 Exit Criteria:
 - Repeatable deployment path with minimal manual setup
@@ -88,3 +90,9 @@ Exit Criteria:
 - 2026-02-24: Added GitHub collaboration basics (`LICENSE`, `CONTRIBUTING.md`, `.github/PULL_REQUEST_TEMPLATE.md`).
 - 2026-02-24: Added release management docs (`CHANGELOG.md`, `RELEASE_CHECKLIST.md`).
 - 2026-02-24: Added GitHub Actions CI workflow to run pytest on push/PR (`.github/workflows/ci.yml`).
+- 2026-02-24: Implemented CLI batch mode (`--input-dir`, `--pattern`, `--recursive`, `--fail-fast`) with generated batch summary CSV output.
+- 2026-02-24: Added persistent run history tracking (`outputs/run_history.csv`) for CLI/UI and added a Streamlit historical comparison panel.
+- 2026-02-24: Added baseline drift monitoring on model-dependent outputs (intent clusters, negative recommendations, Type B bleeders) with alerts in CLI and Streamlit.
+- 2026-02-24: Added runtime environment profiles (`config/profiles/local|dev|prod.json`) and wired profile selection into CLI/UI (`APP_ENV`, CLI `--env`).
+- 2026-02-24: Added container packaging (`Dockerfile`, `docker-compose.yml`, `.dockerignore`) with mounted outputs/data volumes.
+- 2026-02-24: Updated release/deployment documentation (`CHANGELOG.md`, `RELEASE_CHECKLIST.md`, `docs/DEPLOYMENT.md`, `env/*.env.example`) for repeatable release flow.

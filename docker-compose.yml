@@ -1,0 +1,15 @@
+services:
+  amazon-bulk-file-processor:
+    build: .
+    image: amazon-bulk-file-processor:latest
+    container_name: amazon-bulk-file-processor
+    ports:
+      - "8501:8501"
+    environment:
+      APP_ENV: ${APP_ENV:-prod}
+      STREAMLIT_SERVER_ADDRESS: ${STREAMLIT_SERVER_ADDRESS:-0.0.0.0}
+      STREAMLIT_SERVER_PORT: ${STREAMLIT_SERVER_PORT:-8501}
+      STREAMLIT_SERVER_HEADLESS: ${STREAMLIT_SERVER_HEADLESS:-true}
+    volumes:
+      - ./outputs:/app/outputs
+      - ./data:/app/data

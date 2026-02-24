@@ -9,22 +9,28 @@ from io import BytesIO
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from optimizer import BulkOptimizer
+from run_history import append_run_history, calculate_drift_alerts, load_run_history
+from settings import load_runtime_profile
 
 st.set_page_config(page_title="Amazon PPC Bulk Optimizer", layout="wide")
+runtime_profile = load_runtime_profile()
+history_path = runtime_profile["run_history_path"]
+profile_ui = runtime_profile.get("ui", {})
 
 st.title("Amazon PPC Bulk Optimizer")
 st.markdown("Automate your Amazon PPC bid management using Revenue-Per-Click (RPC) and Z-Score statistical optimization.")
+st.caption(f"Environment Profile: {runtime_profile['name']}")
 
 # Sidebar Configuration
 st.sidebar.header("Configuration")
-target_acos = st.sidebar.slider("Target ACOS (%)", 5, 100, 30) / 100.0
-min_bid = st.sidebar.number_input("Min Bid ($)", value=0.10, step=0.01)
-max_bid = st.sidebar.number_input("Max Bid ($)", value=5.00, step=0.10)
+target_acos = st.sidebar.slider("Target ACOS (%)", 5, 100, int(profile_ui.get("target_acos", 0.30) * 100)) / 100.0
+min_bid = st.sidebar.number_input("Min Bid ($)", value=float(profile_ui.get("min_bid", 0.10)), step=0.01)
+max_bid = st.sidebar.number_input("Max Bid ($)", value=float(profile_ui.get("max_bid", 5.00)), step=0.10)
 
 st.sidebar.header("Safety Settings")
 enforce_48hr = st.sidebar.checkbox(
     "Enforce 48-Hour Rule",
-    value=True,
+    value=bool(profile_ui.get("enforce_48hr_rule", True)),
     help="Block optimization if file data is less than 48 hours old (recommended to avoid incomplete attribution)"
 )
 
@@ -298,6 +304,25 @@ if uploaded_file:
                     help="Estimated monthly savings from blocking wasteful ASINs"
                 )
 
+                append_run_history(
+                    {
+                        "mode": "ui",
+                        "input_file": uploaded_file.name,
+                        "status": "ok",
+                        "error": "",
+                        "bid_updates": int(bid_changes),
+                        "type_a_bleeders": int(bleeder_results.get("type_a", 0)),
+                        "type_b_bleeders": int(bleeder_results.get("type_b", 0)),
+                        "type_c_bleeders": int(bleeder_results.get("type_c", 0)),
+                        "cannibalization_issues": int(cannibalization_count),
+                        "campaigns_analyzed": int(campaign_count),
+                        "intent_clusters": int(n_clusters),
+                        "negative_recommendations": int(negative_product_count),
+                        "runtime_seconds": round(float(stage_timings.get("total_runtime", 0.0)), 2),
+                    },
+                    history_path=history_path,
+                )
+
                 # Product Target Analysis Details
                 product_analysis_df = product_target_results.get('performance_analysis', pd.DataFrame())
                 if not product_analysis_df.empty and product_bleeder_counts.get('type_b', 0) > 0:
@@ -341,6 +366,45 @@ if uploaded_file:
 
                 with st.expander("View Optimization Log"):
                     st.code(optimizer.get_optimization_log(), language=None)
+
+                with st.expander("Historical Run Tracking"):
+                    history_df = load_run_history(history_path=history_path)
+                    if history_df.empty:
+                        st.info("No historical runs recorded yet.")
+                    else:
+                        history_df = history_df.sort_values("timestamp", ascending=False)
+                        st.dataframe(history_df.head(20), use_container_width=True, hide_index=True)
+
+                        successful = history_df[history_df["status"] == "ok"].copy()
+                        if len(successful) >= 2:
+                            latest = successful.iloc[0]
+                            previous = successful.iloc[1]
+                            st.write("**Latest vs Previous Successful Run**")
+                            col_hist1, col_hist2, col_hist3 = st.columns(3)
+                            col_hist1.metric(
+                                "Bid Updates Delta",
+                                int(latest["bid_updates"]),
+                                int(latest["bid_updates"] - previous["bid_updates"]),
+                            )
+                            col_hist2.metric(
+                                "Bleeders Delta",
+                                int(latest["type_a_bleeders"] + latest["type_b_bleeders"] + latest["type_c_bleeders"]),
+                                int(
+                                    (latest["type_a_bleeders"] + latest["type_b_bleeders"] + latest["type_c_bleeders"])
+                                    - (previous["type_a_bleeders"] + previous["type_b_bleeders"] + previous["type_c_bleeders"])
+                                ),
+                            )
+                            col_hist3.metric(
+                                "Runtime Delta (s)",
+                                round(float(latest["runtime_seconds"]), 2),
+                                round(float(latest["runtime_seconds"] - previous["runtime_seconds"]), 2),
+                            )
+
+                        alerts = calculate_drift_alerts(history_df)
+                        if alerts:
+                            st.warning("Potential model/output drift detected (vs recent baseline):")
+                            drift_df = pd.DataFrame(alerts)
+                            st.dataframe(drift_df, use_container_width=True, hide_index=True)
 
                 # Generate markdown report
                 markdown_report = optimizer.generate_markdown_report()
@@ -439,8 +503,26 @@ if uploaded_file:
                     st.info("Additional insights included:\n" + "\n".join(f"- {msg}" for msg in info_messages))
 
             except Exception as e:
+                append_run_history(
+                    {
+                        "mode": "ui",
+                        "input_file": uploaded_file.name,
+                        "status": "failed",
+                        "error": str(e),
+                    },
+                    history_path=history_path,
+                )
                 st.error(f"An error occurred: {e}")
                 st.stop()
                 
     except Exception as e:
+        append_run_history(
+            {
+                "mode": "ui",
+                "input_file": uploaded_file.name,
+                "status": "failed",
+                "error": str(e),
+            },
+            history_path=history_path,
+        )
         st.error(f"An error occurred: {e}")
