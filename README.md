@@ -1,0 +1,281 @@
+# Amazon PPC Bulk Optimizer
+
+A Python-based tool for automating Amazon PPC bid optimizations using **statistical methods** and **NLP-powered semantic intelligence** instead of arbitrary rules.
+
+## Features
+
+### Core Optimization (Phase 1-2)
+- **Revenue-Per-Click (RPC) Optimization**: More stable than ACOS-only targeting
+- **Statistical Bleeder Detection**: Identifies underperforming keywords using Z-scores (Types A, B, C)
+- **48-Hour Attribution Safety**: Prevents optimization on incomplete data
+- **Safety Rails**: ±20% max bid changes, min/max bid limits, minimum data thresholds
+- **Cannibalization Detection**: Finds duplicate keywords across ad groups
+- **Budget Optimization**: ROAS-based budget recommendations
+
+### Advanced Features (Phase 3 - NLP Intelligence) 🆕
+- **Product Target Analysis**: Statistical framework for ASIN performance (4 bleeder types)
+- **Search Term Intent Clustering**: NLP-powered customer intent analysis using sentence-transformers
+- **Negative Product Targets Export**: Auto-generated Amazon-ready file to block wasteful ASINs
+- **Negative Keywords Export**: Auto-generated Amazon-ready file to block wasteful search terms
+- **Estimated Savings Calculator**: Know your ROI before implementing
+
+### User Experience
+- **Comprehensive Logging**: Full audit trail of all optimization decisions
+- **Progress Indicators**: Real-time feedback during processing
+- **Performance Metrics**: Per-stage runtime timings for troubleshooting and tuning
+- **Output Validation**: Ensures file integrity before download
+- **6 Download Options**: Bid changes, analysis report, full data, 2 negative recommendation files, and optimization log
+- **User-Friendly UI**: Streamlit web interface with detailed metrics and expandable reports
+
+## Quick Start
+
+### 1. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+
+# Optional (development/testing tooling)
+pip install -r requirements-dev.txt
+```
+
+### 2. Run the App
+
+```bash
+streamlit run src/app.py
+```
+
+### 3. Use the Tool
+
+1. Configure settings in the sidebar (Target ACOS, min/max bids)
+2. Upload your Amazon bulk file (.xlsx)
+3. Click "Run Optimization"
+4. Download the optimized file
+5. Upload to Amazon Seller Central
+
+## CLI Mode
+
+You can run the optimizer from terminal without Streamlit.
+
+### Basic Command
+
+```bash
+python -m src.cli --input "path/to/bulk-file.xlsx"
+```
+
+### Common Commands
+
+```bash
+# Set optimization controls
+python -m src.cli --input "bulk.xlsx" --target-acos 0.30 --min-bid 0.10 --max-bid 5.00
+
+# Write outputs to a custom folder
+python -m src.cli --input "bulk.xlsx" --output-dir "outputs/run_01"
+
+# Disable 48-hour safety rule (not recommended)
+python -m src.cli --input "bulk.xlsx" --disable-48hr-rule
+
+# Skip NLP phase for faster runs
+python -m src.cli --input "bulk.xlsx" --skip-nlp
+
+# Tune NLP clustering and negative keyword thresholds
+python -m src.cli --input "bulk.xlsx" --n-clusters 8 --min-cluster-size 10 --negative-keyword-min-spend 15 --negative-keyword-max-acos 1.2
+
+# Show all available options
+python -m src.cli --help
+```
+
+### CLI Outputs
+
+By default, CLI writes files into `outputs/`:
+- Amazon upload-ready Excel
+- Full analysis Excel
+- Markdown optimization report
+- Optimization log (`.txt`)
+- Negative product targets Excel (unless `--skip-nlp`)
+- Negative keywords Excel (unless `--skip-nlp`)
+
+CLI also prints per-stage runtime timings at the end of each run.
+
+## Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Target ACOS** | 30% | Your target Advertising Cost of Sale |
+| **Min Bid** | $0.10 | Minimum bid floor |
+| **Max Bid** | $5.00 | Maximum bid ceiling |
+| **Enforce 48-Hour Rule** | ✓ Enabled | Block files with incomplete attribution |
+
+### Advanced Thresholds (Sidebar)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Min Clicks for Optimization** | 10 | Minimum clicks required before RPC bid updates are applied |
+| **Max Bid Change per Run** | 20% | Caps bid movement up/down in one run |
+| **Type A Min Impressions** | 1000 | Minimum impressions before low-CTR Type A detection applies |
+| **Type A Z-Score Threshold** | -1.5 | Cutoff for low-CTR outlier detection |
+| **Type B Click StdDev Multiplier** | 2.0 | Controls strictness of click-heavy zero-sale Type B detection |
+| **Type C Max Impressions** | 100 | Max impressions before a term is considered a Type C ghost keyword |
+
+## How It Works
+
+### RPC Bid Optimization
+
+Instead of reacting to ACOS volatility, the tool uses:
+
+```
+New Bid = (Total Sales / Total Clicks) × Target ACOS
+```
+
+With safety constraints:
+- Maximum ±20% change per run
+- Only optimizes keywords with >10 clicks
+- Respects min/max bid limits
+
+### Bleeder Detection
+
+Uses Z-score analysis to identify:
+
+**For Keywords:**
+- **Type A**: Low CTR (impression bloat) → Reduce bid
+- **Type B**: High clicks, zero sales (wasteful spend) → Reduce to scouting level
+- **Type C**: Low impressions (<100) → Flag for "Test More" report (no bid change)
+
+**For Product Targets (ASINs):** 🆕
+- **Type A**: Low CTR (Z-score < -1.5) → Reduce bid
+- **Type B**: Non-converting (Clicks ≥ 20, Sales = 0) → Add to negative targeting ⚠️ PRIORITY
+- **Type C**: High ACOS (> 80%) → Reduce bid or negate
+- **Type D**: Insufficient data (< 100 impressions) → Flag for testing
+
+### NLP Intent Clustering 🆕
+
+Uses machine learning to group search terms by customer intent:
+
+```
+Example Results:
+Cluster 1: "dress up clothes", "princess costume" → ROAS 4.2x ✅ Scale
+Cluster 2: "cheap dress", "dollar dress" → ROAS 0.3x ❌ Negate
+```
+
+**Technology**: sentence-transformers (384-dimensional embeddings) + K-means clustering
+
+### Amazon-Ready Negative Files 🆕
+
+Automatically generates two Excel files formatted for direct Amazon upload:
+
+1. **Negative Product Targets** - Block wasteful ASINs
+2. **Negative Keywords** - Block wasteful search terms
+
+No manual formatting needed - just download and upload to Seller Central!
+
+## Important: The 48-Hour Rule
+
+⚠️ **Amazon attribution can take up to 48 hours.** Optimizing on recent data is the #1 cause of bad bid changes.
+
+The tool:
+- Checks your bulk file's end date (from filename)
+- Blocks optimization if data is <48 hours old
+- You can override this (not recommended)
+
+**Best Practice**: Wait 48 hours after your data period ends before downloading the bulk file.
+
+## Requirements
+
+- Python 3.10 or higher
+- Windows, macOS, or Linux
+- Amazon Seller Central bulk file (.xlsx)
+
+## Troubleshooting
+
+### "Missing required columns" Error
+
+Your bulk file must include: Entity, Impressions, Clicks, Spend, Sales, Bid
+
+**Fix**: Download a fresh bulk file from Amazon Seller Central
+
+### "CRITICAL: File within 48 hours" Error
+
+Your file data is too recent (incomplete sales attribution).
+
+**Fix Options**:
+1. Wait 48 hours and download a new bulk file
+2. Download a file with an earlier date range
+3. Disable the 48-hour rule in Safety Settings (not recommended)
+
+### No Bid Changes Made
+
+Possible reasons:
+- Keywords have <10 clicks (need more data)
+- Current bids already align with target ACOS
+- Min/max bid limits are too restrictive
+
+## Project Structure
+
+```
+src/
+├── app.py          # Streamlit UI
+├── cli.py          # Command-line interface
+└── optimizer.py    # Optimization logic
+tests/              # Pytest suite (active)
+data/
+└── samples/        # Local sample input files (gitignored by default)
+docs/
+├── CLAUDE.md       # Developer instructions
+└── gemini.md       # Original project specification (historical reference)
+
+ROADMAP.md          # Authoritative roadmap (single source of truth)
+SUMMARY.md          # Working technical summary
+CHANGELOG.md        # Change history
+RELEASE_CHECKLIST.md # First GitHub release checklist
+README.md           # User guide
+CONTRIBUTING.md     # Contribution workflow
+LICENSE             # MIT license
+archive/docs/       # Archived status/phase documentation
+archive/tests_legacy/ # Archived script-style test runners
+requirements.txt    # Python dependencies
+```
+
+## Testing
+
+Run the automated test suites:
+
+```bash
+# Active automated suite
+python -m pytest tests/
+```
+
+Legacy script-style test runners were archived to `archive/tests_legacy/` for reference.
+
+All tests should pass before using the tool on production data.
+
+## Safety Features
+
+✅ **Data Validation**: Checks for required columns before processing
+✅ **Input Validation**: Rejects invalid configurations
+✅ **48-Hour Rule**: Blocks optimization on incomplete data
+✅ **Incremental Changes**: Limits bid swings to ±20%
+✅ **Min Data Threshold**: Requires >10 clicks for optimization
+✅ **Fallback Logic**: Uses Ad Group Default Bid when needed
+
+## Development
+
+See **docs/CLAUDE.md** for detailed developer instructions.
+
+## License
+
+MIT License - see `LICENSE`.
+
+## Support
+
+For issues or questions:
+1. Review **ROADMAP.md** for current priorities and status
+2. Review **SUMMARY.md** for architecture/workflow context
+3. Check **archive/docs/** for historical phase/status notes
+4. Run `python -m pytest tests/` to verify installation
+
+---
+
+**Built with**: Python, Streamlit, Pandas, NumPy, Openpyxl, sentence-transformers, scikit-learn, PyTorch
+
+**Version**: 4.0 (NLP Intelligence - Phase 3)
+
+**Last Updated**: 2026-02-11
