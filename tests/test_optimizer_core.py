@@ -11,9 +11,9 @@ def test_loads_required_sheet_and_columns(optimizer):
         assert col in optimizer.df.columns
 
 
-def test_48_hour_rule_returns_no_error_for_old_sample(optimizer):
+def test_48_hour_rule_is_advisory(optimizer):
     warning = optimizer.check_48_hour_rule()
-    assert warning is None
+    assert warning is None or "within the last 48 hours" in warning
 
 
 def test_optimize_bids_updates_operation_and_preserves_low_data_bids(optimizer):

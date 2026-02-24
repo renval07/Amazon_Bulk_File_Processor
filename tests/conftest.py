@@ -7,12 +7,17 @@ from src.optimizer import BulkOptimizer
 
 @pytest.fixture
 def sample_file_path() -> Path:
-    return (
-        Path(__file__).resolve().parents[1]
-        / "data"
-        / "samples"
-        / "bulk-a2kk083uqnb8ha-20251213-20260211-1770782206348 (1).xlsx"
-    )
+    samples_dir = Path(__file__).resolve().parents[1] / "data" / "samples"
+    preferred = samples_dir / "bulk-a2kk083uqnb8ha-20251213-20260211-1770782206348 (1).xlsx"
+    if preferred.exists():
+        return preferred
+
+    candidates = sorted(samples_dir.glob("bulk-*.xlsx"))
+    if not candidates:
+        candidates = sorted(samples_dir.glob("*.xlsx"))
+    if not candidates:
+        raise FileNotFoundError(f"No sample .xlsx files found in {samples_dir}")
+    return candidates[0]
 
 
 @pytest.fixture

@@ -112,3 +112,4 @@ Exit Criteria:
 - 2026-02-24: Cleaned documentation to one status source of truth (`ROADMAP.md`): archived `SUMMARY.md` and historical docs (`CLAUDE`, `gemini`, predeploy/output analysis) into `archive/docs/`, keeping only active docs in `docs/`.
 - 2026-02-24: Streamlit UX hardening: switched default theme to dark mode and reduced rerun overhead by caching unified-download workbook generation/Excel sheet reads.
 - 2026-02-24: Deployment hardening for SaaS startup reliability: made `sentence-transformers` optional (`requirements-nlp.txt`) and added TF-IDF fallback for intent clustering when semantic model dependencies are unavailable.
+- 2026-02-24: Amazon upload compatibility hardening: enforced single-product negative exports (Sponsored Products), excluded unsupported `keyword-group` SP targeting rows from upload files, and added regression tests for both cases.

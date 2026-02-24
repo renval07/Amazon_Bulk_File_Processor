@@ -46,3 +46,30 @@ def test_full_analysis_file_includes_budget_sheet(optimizer):
 
     sheets = pd.ExcelFile(output).sheet_names
     assert "Budget Recommendations" in sheets
+
+
+def test_amazon_upload_excludes_unsupported_keyword_group_targets(optimizer):
+    optimizer.optimize_bids()
+    optimizer.identify_bleeders()
+
+    row = {col: "" for col in optimizer.df.columns}
+    row.update(optimizer.df.iloc[0].to_dict())
+    row["Product"] = "Sponsored Products"
+    row["Entity"] = "Product Targeting"
+    row["Operation"] = "Update"
+    row["Product Targeting Expression"] = 'keyword-group="gift"'
+    if "Resolved Product Targeting Expression (Informational only)" in optimizer.df.columns:
+        row["Resolved Product Targeting Expression (Informational only)"] = (
+            'keyword-group="Keywords related to gifts"'
+        )
+
+    optimizer.df = pd.concat([optimizer.df, pd.DataFrame([row])], ignore_index=True)
+
+    output = BytesIO()
+    optimizer.save_optimized_file(output, include_analysis_sheets=False, amazon_upload_ready=True)
+    output.seek(0)
+
+    sp_df = pd.read_excel(output, sheet_name="Sponsored Products Campaigns")
+    if "Product Targeting Expression" in sp_df.columns:
+        expr = sp_df["Product Targeting Expression"].fillna("").astype(str).str.strip().str.lower()
+        assert not expr.str.startswith("keyword-group=").any()

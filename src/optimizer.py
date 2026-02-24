@@ -16,6 +16,7 @@ class BulkOptimizer:
     TYPE_A_LABEL = "Low Engagement"
     TYPE_B_LABEL = "High-Cost Non-Converter"
     TYPE_C_LABEL = "Low Visibility"
+    PRIMARY_BULK_PRODUCT = "Sponsored Products"
     AUTO_TARGET_BUCKETS = {
         "close-match",
         "loose-match",
@@ -177,6 +178,29 @@ class BulkOptimizer:
     def _is_auto_target_bucket(cls, series):
         normalized = cls._normalized_targeting_expression(series)
         return normalized.isin(cls.AUTO_TARGET_BUCKETS)
+
+    @classmethod
+    def _is_unsupported_sp_targeting_expression(cls, df):
+        """Flags Sponsored Products product targets with unsupported expression types."""
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return pd.Series(False, index=df.index if isinstance(df, pd.DataFrame) else None, dtype=bool)
+
+        product = df.get("Product", pd.Series("", index=df.index)).fillna("").astype(str).str.strip().str.lower()
+        entity = df.get("Entity", pd.Series("", index=df.index)).fillna("").astype(str).str.strip().str.lower()
+        expr = df.get("Product Targeting Expression", pd.Series("", index=df.index)).fillna("").astype(str).str.strip().str.lower()
+        resolved = (
+            df.get("Resolved Product Targeting Expression (Informational only)", pd.Series("", index=df.index))
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+        unsupported_expr = expr.str.startswith("keyword-group=") | resolved.str.startswith("keyword-group=")
+        return (
+            product.eq(cls.PRIMARY_BULK_PRODUCT.lower())
+            & entity.eq("product targeting")
+            & unsupported_expr
+        )
 
     def _ensure_nlp_dependencies(self):
         """Loads NLP dependencies on demand to keep startup lightweight."""
@@ -794,6 +818,15 @@ class BulkOptimizer:
                             if sheet_name != 'Sponsored Products Campaigns':
                                 continue
                             data_to_save = data_to_save.iloc[0:0]
+
+                        unsupported_mask = self._is_unsupported_sp_targeting_expression(data_to_save)
+                        if unsupported_mask.any():
+                            dropped_count = int(unsupported_mask.sum())
+                            data_to_save = data_to_save.loc[~unsupported_mask].copy()
+                            self._log(
+                                f"Excluded {dropped_count} unsupported Sponsored Products keyword-group target row(s) "
+                                f"from '{sheet_name}' upload export"
+                            )
 
                         data_to_save.to_excel(writer, sheet_name=sheet_name, index=False)
                         written_sheets += 1
@@ -1731,6 +1764,22 @@ class BulkOptimizer:
                 f"Excluded {excluded} auto-target bucket rows from negative product export"
             )
 
+        if 'Ad_Type' in recommendations_df.columns:
+            supported_mask = (
+                recommendations_df['Ad_Type']
+                .fillna('')
+                .astype(str)
+                .str.strip()
+                .str.lower()
+                .eq(self.PRIMARY_BULK_PRODUCT.lower())
+            )
+            excluded_products = int((~supported_mask).sum())
+            if excluded_products > 0:
+                self._log(
+                    f"Excluded {excluded_products} non-{self.PRIMARY_BULK_PRODUCT} row(s) from negative product export"
+                )
+                recommendations_df = recommendations_df[supported_mask].copy()
+
         if len(recommendations_df) == 0:
             self._log("No valid negative product target recommendations to export after filtering")
             empty_df = pd.DataFrame(columns=[
@@ -1890,6 +1939,22 @@ class BulkOptimizer:
         negative_with_details = negative_with_details.drop_duplicates(
             subset=['Customer Search Term', 'Campaign ID', 'Ad Group ID']
         )
+        if 'Ad_Type' in negative_with_details.columns:
+            supported_mask = (
+                negative_with_details['Ad_Type']
+                .fillna('')
+                .astype(str)
+                .str.strip()
+                .str.lower()
+                .eq(self.PRIMARY_BULK_PRODUCT.lower())
+            )
+            excluded_products = int((~supported_mask).sum())
+            if excluded_products > 0:
+                self._log(
+                    f"Excluded {excluded_products} non-{self.PRIMARY_BULK_PRODUCT} row(s) from negative keyword export"
+                )
+                negative_with_details = negative_with_details[supported_mask].copy()
+
         # Amazon requires parent IDs for create operations on negative keywords.
         negative_with_details = negative_with_details[
             negative_with_details['Campaign ID'].notna() & negative_with_details['Ad Group ID'].notna()

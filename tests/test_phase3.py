@@ -153,6 +153,8 @@ def test_negative_keywords_export_schema_with_mock_clusters(monkeypatch, optimiz
         assert exported["Campaign ID"].notna().all()
         assert exported["Ad Group ID"].notna().all()
         assert exported["State"].astype(str).str.lower().eq("enabled").all()
+        assert exported["Product"].nunique() == 1
+        assert exported["Product"].iloc[0] == "Sponsored Products"
 
 
 def test_negative_keywords_can_filter_to_low_intent_clusters(optimizer):
