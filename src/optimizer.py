@@ -1718,7 +1718,7 @@ class BulkOptimizer:
             empty_df = pd.DataFrame(columns=[
                 'Product', 'Entity', 'Operation', 'Campaign ID', 'Ad Group ID',
                 'Campaign Name (Informational only)', 'Ad Group Name (Informational only)',
-                'Product Targeting Expression', 'Match Type'
+                'Product Targeting Expression', 'Match Type', 'State'
             ])
             empty_df.to_excel(output_buffer, index=False, sheet_name='Negative Product Targets')
             return output_buffer
@@ -1736,7 +1736,7 @@ class BulkOptimizer:
             empty_df = pd.DataFrame(columns=[
                 'Product', 'Entity', 'Operation', 'Campaign ID', 'Ad Group ID',
                 'Campaign Name (Informational only)', 'Ad Group Name (Informational only)',
-                'Product Targeting Expression', 'Match Type'
+                'Product Targeting Expression', 'Match Type', 'State'
             ])
             empty_df.to_excel(output_buffer, index=False, sheet_name='Negative Product Targets')
             return output_buffer
@@ -1762,6 +1762,8 @@ class BulkOptimizer:
 
         # Match type
         negative_upload['Match Type'] = match_type
+        # Bulk uploads require State on create rows.
+        negative_upload['State'] = 'enabled'
 
         # Write to Excel
         with pd.ExcelWriter(output_buffer, engine='xlsxwriter') as writer:
@@ -1803,7 +1805,7 @@ class BulkOptimizer:
             empty_df = pd.DataFrame(columns=[
                 'Product', 'Entity', 'Operation', 'Campaign ID', 'Ad Group ID',
                 'Campaign Name', 'Ad Group Name',
-                'Keyword Text', 'Match Type'
+                'Keyword Text', 'Match Type', 'State'
             ])
             empty_df.to_excel(output_buffer, index=False, sheet_name='Negative Keywords')
             return output_buffer
@@ -1845,7 +1847,7 @@ class BulkOptimizer:
             empty_df = pd.DataFrame(columns=[
                 'Product', 'Entity', 'Operation', 'Campaign ID', 'Ad Group ID',
                 'Campaign Name', 'Ad Group Name',
-                'Keyword Text', 'Match Type'
+                'Keyword Text', 'Match Type', 'State'
             ])
             empty_df.to_excel(output_buffer, index=False, sheet_name='Negative Keywords')
             return output_buffer
@@ -1896,7 +1898,7 @@ class BulkOptimizer:
             self._log("No negative keywords with valid Campaign ID + Ad Group ID")
             empty_df = pd.DataFrame(columns=[
                 'Product', 'Entity', 'Operation', 'Campaign ID', 'Ad Group ID',
-                'Campaign Name', 'Ad Group Name', 'Keyword Text', 'Match Type'
+                'Campaign Name', 'Ad Group Name', 'Keyword Text', 'Match Type', 'State'
             ])
             empty_df.to_excel(output_buffer, index=False, sheet_name='Negative Keywords')
             return output_buffer
@@ -1913,6 +1915,8 @@ class BulkOptimizer:
         negative_upload['Ad Group Name'] = negative_with_details['Ad Group Name (Informational only)']
         negative_upload['Keyword Text'] = negative_with_details['Customer Search Term']
         negative_upload['Match Type'] = match_type
+        # Bulk uploads require State on create rows.
+        negative_upload['State'] = 'enabled'
 
         # Write to Excel
         with pd.ExcelWriter(output_buffer, engine='xlsxwriter') as writer:

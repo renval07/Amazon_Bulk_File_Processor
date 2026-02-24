@@ -29,8 +29,10 @@ def test_negative_product_targets_export_schema(optimizer):
     output.seek(0)
 
     exported = pd.read_excel(output, sheet_name="Negative Product Targets")
-    for col in ["Product", "Entity", "Operation", "Product Targeting Expression", "Match Type"]:
+    for col in ["Product", "Entity", "Operation", "Product Targeting Expression", "Match Type", "State"]:
         assert col in exported.columns
+    if not exported.empty:
+        assert exported["State"].astype(str).str.lower().eq("enabled").all()
 
 
 def test_negative_recommendations_exclude_auto_target_buckets(optimizer):
@@ -136,11 +138,21 @@ def test_negative_keywords_export_schema_with_mock_clusters(monkeypatch, optimiz
     output.seek(0)
     exported = pd.read_excel(output, sheet_name="Negative Keywords")
 
-    for col in ["Product", "Entity", "Operation", "Campaign ID", "Ad Group ID", "Keyword Text", "Match Type"]:
+    for col in [
+        "Product",
+        "Entity",
+        "Operation",
+        "Campaign ID",
+        "Ad Group ID",
+        "Keyword Text",
+        "Match Type",
+        "State",
+    ]:
         assert col in exported.columns
     if not exported.empty:
         assert exported["Campaign ID"].notna().all()
         assert exported["Ad Group ID"].notna().all()
+        assert exported["State"].astype(str).str.lower().eq("enabled").all()
 
 
 def test_negative_keywords_can_filter_to_low_intent_clusters(optimizer):
