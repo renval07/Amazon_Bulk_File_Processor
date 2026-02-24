@@ -16,7 +16,7 @@ Project status/source of truth: `ROADMAP.md`
 
 ### Advanced Features (Phase 3 - NLP Intelligence) 🆕
 - **Product Target Analysis**: Statistical framework for ASIN performance (4 bleeder types)
-- **Search Term Intent Clustering**: NLP-powered customer intent analysis using sentence-transformers
+- **Search Term Intent Clustering**: NLP-powered customer intent analysis (sentence-transformers, with TF-IDF fallback)
 - **Negative Product Targets Export**: Auto-generated Amazon-ready file to block wasteful ASINs
 - **Negative Keywords Export**: Auto-generated Amazon-ready file to block wasteful search terms
 - **Estimated Savings Calculator**: Know your ROI before implementing
@@ -35,6 +35,9 @@ Project status/source of truth: `ROADMAP.md`
 
 ```bash
 pip install -r requirements.txt
+
+# Optional (semantic NLP embeddings for clustering)
+pip install -r requirements-nlp.txt
 
 # Optional (development/testing tooling)
 pip install -r requirements-dev.txt
@@ -202,7 +205,7 @@ Cluster 1: "dress up clothes", "princess costume" → ROAS 4.2x ✅ Scale
 Cluster 2: "cheap dress", "dollar dress" → ROAS 0.3x ❌ Negate
 ```
 
-**Technology**: sentence-transformers (384-dimensional embeddings) + K-means clustering
+**Technology**: sentence-transformers embeddings (optional) or TF-IDF fallback + K-means clustering
 
 ### Amazon-Ready Negative Files 🆕
 
@@ -257,12 +260,12 @@ Possible reasons:
 ### NLP clustering shows 0 clusters
 
 Possible reasons:
-- Model download is blocked in your environment
 - Not enough valid search-term rows
 
 Fix options:
-1. Enable internet/model cache for `sentence-transformers`
-2. Disable NLP for the run (sidebar `Run NLP Analysis` or CLI `--skip-nlp`)
+1. Install optional semantic model support: `pip install -r requirements-nlp.txt`
+2. Ensure enough text search terms exist in the input bulk file
+3. Disable NLP for the run (sidebar `Run NLP Analysis` or CLI `--skip-nlp`)
 
 ## Streamlit Cloud Deployment
 
@@ -355,7 +358,7 @@ For issues or questions:
 
 ---
 
-**Built with**: Python, Streamlit, Pandas, NumPy, Openpyxl, sentence-transformers, scikit-learn, PyTorch
+**Built with**: Python, Streamlit, Pandas, NumPy, Openpyxl, scikit-learn (+ optional sentence-transformers)
 
 **Version**: 4.1 (P2 Scale + P3 Packaging)
 

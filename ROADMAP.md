@@ -110,3 +110,5 @@ Exit Criteria:
 - 2026-02-24: Completed Phase C smoke validation on sample file (`34 passed, 1 skipped` tests, CLI optimize/export pass, and re-upload parse/optimize pass on generated Amazon upload file).
 - 2026-02-24: Performed repository hygiene for GitHub readiness: hardened `.gitignore`, added `.gitattributes`, removed obsolete `archive/misc/_ul`, and added `docs/GITHUB_DESKTOP.md` workflow guidance.
 - 2026-02-24: Cleaned documentation to one status source of truth (`ROADMAP.md`): archived `SUMMARY.md` and historical docs (`CLAUDE`, `gemini`, predeploy/output analysis) into `archive/docs/`, keeping only active docs in `docs/`.
+- 2026-02-24: Streamlit UX hardening: switched default theme to dark mode and reduced rerun overhead by caching unified-download workbook generation/Excel sheet reads.
+- 2026-02-24: Deployment hardening for SaaS startup reliability: made `sentence-transformers` optional (`requirements-nlp.txt`) and added TF-IDF fallback for intent clustering when semantic model dependencies are unavailable.

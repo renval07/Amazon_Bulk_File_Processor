@@ -10,6 +10,7 @@ from io import BytesIO
 SentenceTransformer = None
 KMeans = None
 silhouette_score = None
+TfidfVectorizer = None
 
 class BulkOptimizer:
     TYPE_A_LABEL = "Low Engagement"
@@ -179,12 +180,8 @@ class BulkOptimizer:
 
     def _ensure_nlp_dependencies(self):
         """Loads NLP dependencies on demand to keep startup lightweight."""
-        global SentenceTransformer, KMeans, silhouette_score
+        global SentenceTransformer, KMeans, silhouette_score, TfidfVectorizer
 
-        if SentenceTransformer is None:
-            from sentence_transformers import SentenceTransformer as _SentenceTransformer
-
-            SentenceTransformer = _SentenceTransformer
         if KMeans is None:
             from sklearn.cluster import KMeans as _KMeans
 
@@ -193,6 +190,43 @@ class BulkOptimizer:
             from sklearn.metrics import silhouette_score as _silhouette_score
 
             silhouette_score = _silhouette_score
+        if TfidfVectorizer is None:
+            from sklearn.feature_extraction.text import TfidfVectorizer as _TfidfVectorizer
+
+            TfidfVectorizer = _TfidfVectorizer
+        if SentenceTransformer is None:
+            try:
+                from sentence_transformers import SentenceTransformer as _SentenceTransformer
+
+                SentenceTransformer = _SentenceTransformer
+            except Exception:
+                # Optional dependency: keep startup/deploy lightweight when transformer stack is unavailable.
+                SentenceTransformer = False
+
+    def _generate_search_embeddings(self, search_terms):
+        """Generates vectors for search terms with a semantic-model first strategy and TF-IDF fallback."""
+        self._ensure_nlp_dependencies()
+
+        # Prefer sentence-transformers when installed and working.
+        if SentenceTransformer:
+            try:
+                self._log("Loading NLP model (all-MiniLM-L6-v2)...")
+                model = SentenceTransformer('all-MiniLM-L6-v2')
+                self._log("Generating semantic embeddings...")
+                embeddings = model.encode(search_terms, show_progress_bar=False)
+                self._log("Embedding backend: sentence-transformers")
+                return np.asarray(embeddings)
+            except Exception as exc:
+                self._log(
+                    f"Sentence-transformers unavailable for this run ({exc}); falling back to TF-IDF.",
+                    level='warning',
+                )
+
+        # Lightweight fallback that keeps clustering available in constrained environments.
+        vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1, max_features=512)
+        embeddings = vectorizer.fit_transform([str(term) for term in search_terms]).toarray()
+        self._log("Embedding backend: TF-IDF fallback")
+        return np.asarray(embeddings)
 
     def _z_score_for_confidence(self, confidence_level):
         """Maps supported confidence levels to z-scores."""
@@ -1480,7 +1514,8 @@ class BulkOptimizer:
         """
         Cluster search terms by customer intent using NLP embeddings.
 
-        Uses sentence-transformers to generate embeddings and K-means for clustering.
+        Uses sentence-transformers embeddings when available, with TF-IDF fallback,
+        and applies K-means clustering.
         Only analyzes TEXT search terms (not ASINs).
 
         Args:
@@ -1563,13 +1598,9 @@ class BulkOptimizer:
         unique_terms = search_term_agg['Customer Search Term'].tolist()
         self._log(f"Analyzing {len(unique_terms)} unique search terms")
 
-        # Generate embeddings using sentence-transformers
+        # Generate embeddings (sentence-transformers when available, otherwise TF-IDF fallback)
         try:
-            self._ensure_nlp_dependencies()
-            self._log("Loading NLP model (this may take a moment on first run)...")
-            model = SentenceTransformer('all-MiniLM-L6-v2')  # Lightweight, fast model
-            self._log("Generating embeddings...")
-            embeddings = model.encode(unique_terms, show_progress_bar=False)
+            embeddings = self._generate_search_embeddings(unique_terms)
             self._log(f"Generated embeddings: shape {embeddings.shape}")
         except Exception as e:
             self._log(f"ERROR: Failed to generate embeddings: {e}", level='error')

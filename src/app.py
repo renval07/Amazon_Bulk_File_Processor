@@ -20,9 +20,126 @@ history_path = runtime_profile["run_history_path"]
 profile_ui = runtime_profile.get("ui", {})
 
 
-def _read_excel_sheet_from_buffer(buffer: BytesIO, sheet_name: str) -> pd.DataFrame:
-    """Reads one sheet from an in-memory Excel buffer."""
-    return pd.read_excel(BytesIO(buffer.getvalue()), sheet_name=sheet_name)
+@st.cache_data(show_spinner=False)
+def _read_excel_sheet_from_bytes(file_bytes: bytes, sheet_name: str) -> pd.DataFrame:
+    """Reads one sheet from Excel bytes and memoizes it across reruns."""
+    return pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name)
+
+
+def _build_bundle_cache_key(
+    run_signature: str,
+    include_bids: bool,
+    include_negative_products: bool,
+    include_negative_keywords: bool,
+    include_budget_updates: bool,
+) -> str:
+    return (
+        f"bundle:{run_signature}:"
+        f"{int(include_bids)}:{int(include_negative_products)}:"
+        f"{int(include_negative_keywords)}:{int(include_budget_updates)}"
+    )
+
+
+def _build_unified_bundle_bytes(
+    amazon_output_bytes: bytes,
+    negative_products_output_bytes: bytes,
+    negative_keywords_output_bytes: bytes,
+    budget_updates_df: pd.DataFrame,
+    include_bids: bool,
+    include_negative_products: bool,
+    include_negative_keywords: bool,
+    include_budget_updates: bool,
+):
+    """Builds unified upload workbook from selected components."""
+    combined_output = BytesIO()
+    included_parts = []
+
+    if not isinstance(budget_updates_df, pd.DataFrame):
+        budget_updates_df = pd.DataFrame()
+
+    with pd.ExcelWriter(combined_output, engine="xlsxwriter") as writer:
+        if include_bids:
+            amazon_bids_df = _read_excel_sheet_from_bytes(
+                amazon_output_bytes, "Sponsored Products Campaigns"
+            )
+            amazon_bids_df.to_excel(
+                writer,
+                sheet_name=_safe_sheet_name("Sponsored Products Campaigns"),
+                index=False,
+            )
+            included_parts.append(f"Bid Updates ({len(amazon_bids_df)})")
+        if include_negative_products:
+            negative_products_df = _read_excel_sheet_from_bytes(
+                negative_products_output_bytes, "Negative Product Targets"
+            )
+            negative_products_df.to_excel(
+                writer,
+                sheet_name=_safe_sheet_name("Negative Product Targets"),
+                index=False,
+            )
+            included_parts.append(f"Negative Products ({len(negative_products_df)})")
+        if include_negative_keywords:
+            negative_keywords_df = _read_excel_sheet_from_bytes(
+                negative_keywords_output_bytes, "Negative Keywords"
+            )
+            negative_keywords_df.to_excel(
+                writer,
+                sheet_name=_safe_sheet_name("Negative Keywords"),
+                index=False,
+            )
+            included_parts.append(f"Negative Keywords ({len(negative_keywords_df)})")
+        if include_budget_updates:
+            budget_updates_df.to_excel(
+                writer,
+                sheet_name=_safe_sheet_name("SP Campaign Budgets"),
+                index=False,
+            )
+            included_parts.append(f"Budget Updates ({len(budget_updates_df)})")
+        if not included_parts:
+            pd.DataFrame({"Info": ["No sections selected for export"]}).to_excel(
+                writer, sheet_name="Read Me", index=False
+            )
+
+    return combined_output.getvalue(), included_parts
+
+
+def _get_or_build_unified_bundle(
+    run_signature: str,
+    amazon_output_bytes: bytes,
+    negative_products_output_bytes: bytes,
+    negative_keywords_output_bytes: bytes,
+    budget_updates_df: pd.DataFrame,
+    include_bids: bool,
+    include_negative_products: bool,
+    include_negative_keywords: bool,
+    include_budget_updates: bool,
+):
+    cache_key = _build_bundle_cache_key(
+        run_signature,
+        include_bids,
+        include_negative_products,
+        include_negative_keywords,
+        include_budget_updates,
+    )
+    cached_bundle = st.session_state.get(cache_key)
+    if cached_bundle:
+        return cached_bundle.get("bundle_bytes", b""), cached_bundle.get("included_parts", [])
+
+    bundle_bytes, included_parts = _build_unified_bundle_bytes(
+        amazon_output_bytes=amazon_output_bytes,
+        negative_products_output_bytes=negative_products_output_bytes,
+        negative_keywords_output_bytes=negative_keywords_output_bytes,
+        budget_updates_df=budget_updates_df,
+        include_bids=include_bids,
+        include_negative_products=include_negative_products,
+        include_negative_keywords=include_negative_keywords,
+        include_budget_updates=include_budget_updates,
+    )
+    st.session_state[cache_key] = {
+        "bundle_bytes": bundle_bytes,
+        "included_parts": included_parts,
+    }
+    return bundle_bytes, included_parts
 
 
 def _build_budget_updates_upload_df(
@@ -753,6 +870,13 @@ if uploaded_file:
                 # Download buttons
                 st.subheader("Download Files")
                 timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+                campaign_sheet_df = optimizer.original_sheets.get("Sponsored Products Campaigns", pd.DataFrame()).copy()
+                budget_updates_df = _build_budget_updates_upload_df(campaign_sheet_df, budget_recs)
+
+                amazon_output_bytes = amazon_output.getvalue()
+                analysis_output_bytes = analysis_output.getvalue()
+                negative_products_output_bytes = negative_products_output.getvalue()
+                negative_keywords_output_bytes = negative_keywords_output.getvalue()
 
                 # Row 1: Core optimization files
                 col_dl1, col_dl2, col_dl3 = st.columns(3)
@@ -760,7 +884,7 @@ if uploaded_file:
                 with col_dl1:
                     st.download_button(
                         label="Amazon Upload",
-                        data=amazon_output,
+                        data=amazon_output_bytes,
                         file_name=f"amazon_upload_{timestamp}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         on_click="ignore",
@@ -784,7 +908,7 @@ if uploaded_file:
                 with col_dl3:
                     st.download_button(
                         label="Full Excel File",
-                        data=analysis_output,
+                        data=analysis_output_bytes,
                         file_name=f"full_analysis_{timestamp}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         on_click="ignore",
@@ -800,58 +924,23 @@ if uploaded_file:
                     "Bundle contents are controlled in the sidebar under 'Unified Download'."
                 )
 
-                # Build combined workbook based on selected components.
-                combined_output = BytesIO()
-                included_parts = []
-
-                amazon_bids_df = _read_excel_sheet_from_buffer(amazon_output, "Sponsored Products Campaigns")
-                negative_products_df = _read_excel_sheet_from_buffer(negative_products_output, "Negative Product Targets")
-                negative_keywords_df = _read_excel_sheet_from_buffer(negative_keywords_output, "Negative Keywords")
-                campaign_sheet_df = optimizer.original_sheets.get("Sponsored Products Campaigns", pd.DataFrame()).copy()
-                budget_updates_df = _build_budget_updates_upload_df(campaign_sheet_df, budget_recs)
-
-                with pd.ExcelWriter(combined_output, engine="xlsxwriter") as writer:
-                    if bundle_include_bids:
-                        amazon_bids_df.to_excel(
-                            writer,
-                            sheet_name=_safe_sheet_name("Sponsored Products Campaigns"),
-                            index=False,
-                        )
-                        included_parts.append(f"Bid Updates ({len(amazon_bids_df)})")
-                    if bundle_include_negative_products:
-                        negative_products_df.to_excel(
-                            writer,
-                            sheet_name=_safe_sheet_name("Negative Product Targets"),
-                            index=False,
-                        )
-                        included_parts.append(f"Negative Products ({len(negative_products_df)})")
-                    if bundle_include_negative_keywords:
-                        negative_keywords_df.to_excel(
-                            writer,
-                            sheet_name=_safe_sheet_name("Negative Keywords"),
-                            index=False,
-                        )
-                        included_parts.append(f"Negative Keywords ({len(negative_keywords_df)})")
-                    if bundle_include_budget_updates:
-                        budget_updates_df.to_excel(
-                            writer,
-                            sheet_name=_safe_sheet_name("SP Campaign Budgets"),
-                            index=False,
-                        )
-                        included_parts.append(f"Budget Updates ({len(budget_updates_df)})")
-
-                    if not included_parts:
-                        pd.DataFrame({"Info": ["No sections selected for export"]}).to_excel(
-                            writer, sheet_name="Read Me", index=False
-                        )
-
-                combined_output.seek(0)
+                combined_output_bytes, included_parts = _get_or_build_unified_bundle(
+                    run_signature=run_signature,
+                    amazon_output_bytes=amazon_output_bytes,
+                    negative_products_output_bytes=negative_products_output_bytes,
+                    negative_keywords_output_bytes=negative_keywords_output_bytes,
+                    budget_updates_df=budget_updates_df,
+                    include_bids=bundle_include_bids,
+                    include_negative_products=bundle_include_negative_products,
+                    include_negative_keywords=bundle_include_negative_keywords,
+                    include_budget_updates=bundle_include_budget_updates,
+                )
 
                 col_dl4, col_dl5 = st.columns(2)
                 with col_dl4:
                     st.download_button(
                         label="Unified Upload Bundle",
-                        data=combined_output,
+                        data=combined_output_bytes,
                         file_name=f"amazon_unified_upload_{timestamp}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         on_click="ignore",
@@ -911,10 +1000,10 @@ if uploaded_file:
                     "run_nlp_analysis": bool(run_nlp_analysis),
                     "info_messages": info_messages,
                     "stage_timings": stage_timings,
-                    "amazon_output_bytes": amazon_output.getvalue(),
-                    "analysis_output_bytes": analysis_output.getvalue(),
-                    "negative_products_output_bytes": negative_products_output.getvalue(),
-                    "negative_keywords_output_bytes": negative_keywords_output.getvalue(),
+                    "amazon_output_bytes": amazon_output_bytes,
+                    "analysis_output_bytes": analysis_output_bytes,
+                    "negative_products_output_bytes": negative_products_output_bytes,
+                    "negative_keywords_output_bytes": negative_keywords_output_bytes,
                     "markdown_report": markdown_report,
                     "optimization_log": optimizer.get_optimization_log(),
                     "budget_updates_df": budget_updates_df,
@@ -955,17 +1044,17 @@ if uploaded_file:
 
             st.subheader("Download Files")
             timestamp = cached.get("timestamp", pd.Timestamp.now().strftime('%Y%m%d_%H%M%S'))
-            amazon_output = BytesIO(cached.get("amazon_output_bytes", b""))
-            analysis_output = BytesIO(cached.get("analysis_output_bytes", b""))
-            negative_products_output = BytesIO(cached.get("negative_products_output_bytes", b""))
-            negative_keywords_output = BytesIO(cached.get("negative_keywords_output_bytes", b""))
+            amazon_output_bytes = cached.get("amazon_output_bytes", b"")
+            analysis_output_bytes = cached.get("analysis_output_bytes", b"")
+            negative_products_output_bytes = cached.get("negative_products_output_bytes", b"")
+            negative_keywords_output_bytes = cached.get("negative_keywords_output_bytes", b"")
             markdown_report = cached.get("markdown_report", "")
 
             col_dl1, col_dl2, col_dl3 = st.columns(3)
             with col_dl1:
                 st.download_button(
                     label="Amazon Upload",
-                    data=amazon_output,
+                    data=amazon_output_bytes,
                     file_name=f"amazon_upload_{timestamp}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     on_click="ignore",
@@ -987,7 +1076,7 @@ if uploaded_file:
             with col_dl3:
                 st.download_button(
                     label="Full Excel File",
-                    data=analysis_output,
+                    data=analysis_output_bytes,
                     file_name=f"full_analysis_{timestamp}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     on_click="ignore",
@@ -997,55 +1086,25 @@ if uploaded_file:
                 st.caption("📊 Complete data")
 
             # Unified bundle from cached outputs.
-            combined_output = BytesIO()
-            included_parts = []
-            amazon_bids_df = _read_excel_sheet_from_buffer(amazon_output, "Sponsored Products Campaigns")
-            negative_products_df = _read_excel_sheet_from_buffer(negative_products_output, "Negative Product Targets")
-            negative_keywords_df = _read_excel_sheet_from_buffer(negative_keywords_output, "Negative Keywords")
             budget_updates_df = cached.get("budget_updates_df", pd.DataFrame())
-            if not isinstance(budget_updates_df, pd.DataFrame):
-                budget_updates_df = pd.DataFrame()
+            cached_signature = cached.get("run_signature", run_signature)
+            combined_output_bytes, included_parts = _get_or_build_unified_bundle(
+                run_signature=cached_signature,
+                amazon_output_bytes=amazon_output_bytes,
+                negative_products_output_bytes=negative_products_output_bytes,
+                negative_keywords_output_bytes=negative_keywords_output_bytes,
+                budget_updates_df=budget_updates_df,
+                include_bids=bundle_include_bids,
+                include_negative_products=bundle_include_negative_products,
+                include_negative_keywords=bundle_include_negative_keywords,
+                include_budget_updates=bundle_include_budget_updates,
+            )
 
-            with pd.ExcelWriter(combined_output, engine="xlsxwriter") as writer:
-                if bundle_include_bids:
-                    amazon_bids_df.to_excel(
-                        writer,
-                        sheet_name=_safe_sheet_name("Sponsored Products Campaigns"),
-                        index=False,
-                    )
-                    included_parts.append(f"Bid Updates ({len(amazon_bids_df)})")
-                if bundle_include_negative_products:
-                    negative_products_df.to_excel(
-                        writer,
-                        sheet_name=_safe_sheet_name("Negative Product Targets"),
-                        index=False,
-                    )
-                    included_parts.append(f"Negative Products ({len(negative_products_df)})")
-                if bundle_include_negative_keywords:
-                    negative_keywords_df.to_excel(
-                        writer,
-                        sheet_name=_safe_sheet_name("Negative Keywords"),
-                        index=False,
-                    )
-                    included_parts.append(f"Negative Keywords ({len(negative_keywords_df)})")
-                if bundle_include_budget_updates:
-                    budget_updates_df.to_excel(
-                        writer,
-                        sheet_name=_safe_sheet_name("SP Campaign Budgets"),
-                        index=False,
-                    )
-                    included_parts.append(f"Budget Updates ({len(budget_updates_df)})")
-                if not included_parts:
-                    pd.DataFrame({"Info": ["No sections selected for export"]}).to_excel(
-                        writer, sheet_name="Read Me", index=False
-                    )
-
-            combined_output.seek(0)
             col_dl4, col_dl5 = st.columns(2)
             with col_dl4:
                 st.download_button(
                     label="Unified Upload Bundle",
-                    data=combined_output,
+                    data=combined_output_bytes,
                     file_name=f"amazon_unified_upload_{timestamp}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     on_click="ignore",

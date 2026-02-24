@@ -56,11 +56,12 @@ python -m src.cli --env prod --input "data/samples/example.xlsx"
 Use these app settings on Streamlit Cloud:
 
 - Main file path: `streamlit_app.py`
-- Python dependencies: `requirements.txt`
+- Python dependencies: `requirements.txt` (base)
 - Python runtime pin: `runtime.txt` (`python-3.11`)
 - Optional environment variable: `APP_ENV=prod`
 
 Notes:
+- Optional semantic-NLP package: `requirements-nlp.txt` (`sentence-transformers`).
 - `prod` profile defaults `Run NLP Analysis` to OFF for lighter cloud runs.
 - Enable NLP only when you need clustering/negative recommendations.
 - 48-hour date checking is advisory only; recent files show a warning but runs continue.
