@@ -33,6 +33,11 @@ enforce_48hr = st.sidebar.checkbox(
     value=bool(profile_ui.get("enforce_48hr_rule", True)),
     help="Block optimization if file data is less than 48 hours old (recommended to avoid incomplete attribution)"
 )
+run_nlp_analysis = st.sidebar.checkbox(
+    "Run NLP Analysis",
+    value=True,
+    help="Disable this if model download is restricted in your environment."
+)
 
 with st.sidebar.expander("Advanced Thresholds", expanded=False):
     optimization_min_clicks = st.number_input(
@@ -51,14 +56,14 @@ with st.sidebar.expander("Advanced Thresholds", expanded=False):
         help="Caps bid movement in either direction for each optimization run.",
     ) / 100.0
     bleeder_type_a_impressions_threshold = st.number_input(
-        "Type A Min Impressions",
+        "Low Engagement Min Impressions",
         min_value=0,
         value=1000,
         step=50,
-        help="Minimum impressions before low-CTR Type A bleeder logic is applied.",
+        help="Minimum impressions before Low Engagement logic is applied.",
     )
     bleeder_type_a_z_threshold = st.slider(
-        "Type A Z-Score Threshold",
+        "Low Engagement Z-Score Threshold",
         min_value=-4.0,
         max_value=0.0,
         value=-1.5,
@@ -66,19 +71,59 @@ with st.sidebar.expander("Advanced Thresholds", expanded=False):
         help="More negative is stricter. Terms below this Z-score are considered low CTR outliers.",
     )
     bleeder_type_b_clicks_std_multiplier = st.slider(
-        "Type B Click StdDev Multiplier",
+        "High-Cost Non-Converter StdDev Multiplier",
         min_value=0.5,
         max_value=5.0,
         value=2.0,
         step=0.1,
-        help="Higher values are stricter for click-heavy zero-sale Type B bleeders.",
+        help="Higher values are stricter for click-heavy zero-sale terms.",
     )
-    bleeder_type_c_impressions_threshold = st.number_input(
-        "Type C Max Impressions",
-        min_value=1,
-        value=100,
-        step=10,
-        help="Terms below this impression count are flagged as ghost keywords (Type C).",
+    bleeder_type_c_mode = st.selectbox(
+        "Low Visibility Mode",
+        options=["fixed", "percentile", "zscore"],
+        index=0,
+        help="Choose how low-volume terms are detected.",
+    )
+    bleeder_type_c_impressions_threshold = 100
+    bleeder_type_c_percentile = 0.25
+    bleeder_type_c_z_threshold = -1.0
+    if bleeder_type_c_mode == "fixed":
+        bleeder_type_c_impressions_threshold = st.number_input(
+            "Low Visibility Max Impressions",
+            min_value=1,
+            value=100,
+            step=10,
+            help="Terms below this impression count are flagged as low visibility.",
+        )
+    elif bleeder_type_c_mode == "percentile":
+        bleeder_type_c_percentile = st.slider(
+            "Low Visibility Percentile",
+            min_value=0.05,
+            max_value=0.50,
+            value=0.25,
+            step=0.05,
+            help="Flags terms at or below this impression percentile.",
+        )
+    else:
+        bleeder_type_c_z_threshold = st.slider(
+            "Low Visibility Z-Score Threshold",
+            min_value=-3.0,
+            max_value=0.0,
+            value=-1.0,
+            step=0.1,
+            help="Uses log-impression z-score; more negative is stricter.",
+        )
+    cold_start_enable = st.checkbox(
+        "Enable Cold-Start Step-Up",
+        value=True,
+        help="Increase bids for low-volume zero-click terms to collect data.",
+    )
+    cold_start_step_up_amount = st.number_input(
+        "Cold-Start Step-Up ($)",
+        min_value=0.00,
+        value=0.02,
+        step=0.01,
+        help="Bid increment applied to eligible low-volume zero-click terms.",
     )
 
 uploaded_file = st.file_uploader("Upload Bulk File (.xlsx)", type=["xlsx"])
@@ -101,6 +146,11 @@ if uploaded_file:
             bleeder_type_a_z_threshold=bleeder_type_a_z_threshold,
             bleeder_type_b_clicks_std_multiplier=bleeder_type_b_clicks_std_multiplier,
             bleeder_type_c_impressions_threshold=bleeder_type_c_impressions_threshold,
+            bleeder_type_c_mode=bleeder_type_c_mode,
+            bleeder_type_c_percentile=bleeder_type_c_percentile,
+            bleeder_type_c_z_threshold=bleeder_type_c_z_threshold,
+            cold_start_step_up_amount=cold_start_step_up_amount,
+            cold_start_enable=cold_start_enable,
         )
 
         # 48-Hour Rule Check
@@ -137,7 +187,7 @@ if uploaded_file:
                 stage_timings['optimize_bids'] = time.perf_counter() - step_start
 
                 # Step 3: Bleeder Detection
-                status_text.text("Identifying bleeders (Z-Score analysis)...")
+                status_text.text("Identifying low-performance patterns...")
                 progress_bar.progress(50)
                 step_start = time.perf_counter()
                 bleeder_results = optimizer.identify_bleeders()
@@ -152,12 +202,23 @@ if uploaded_file:
                 stage_timings['structural_analysis'] = time.perf_counter() - step_start
 
                 # Step 5: NLP Analysis (Phase 3)
-                status_text.text("Running NLP analysis (product targets & search term clustering)...")
                 progress_bar.progress(70)
-                step_start = time.perf_counter()
-                product_target_results = optimizer.analyze_product_targets()
-                search_term_clusters = optimizer.cluster_search_terms()
-                stage_timings['nlp_analysis'] = time.perf_counter() - step_start
+                if run_nlp_analysis:
+                    status_text.text("Running NLP analysis (product targets & search term clustering)...")
+                    step_start = time.perf_counter()
+                    product_target_results = optimizer.analyze_product_targets()
+                    search_term_clusters = optimizer.cluster_search_terms()
+                    stage_timings['nlp_analysis'] = time.perf_counter() - step_start
+                else:
+                    status_text.text("Skipping NLP analysis...")
+                    product_target_results = {
+                        "bleeder_counts": {"type_a": 0, "type_b": 0, "type_c": 0, "type_d": 0},
+                        "negative_recommendations": pd.DataFrame(),
+                        "performance_analysis": pd.DataFrame(),
+                        "savings_estimate": 0,
+                    }
+                    search_term_clusters = {"clusters": pd.DataFrame(), "cluster_summary": pd.DataFrame(), "n_clusters": 0}
+                    stage_timings['nlp_analysis'] = 0.0
 
                 # Step 6: Validation
                 status_text.text("Validating output...")
@@ -218,9 +279,33 @@ if uploaded_file:
                 st.subheader("Core Optimization Results")
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("RPC Bid Updates", bid_changes)
-                col2.metric("Type A Bleeders", bleeder_results['type_a'], help="Low CTR (Impression Bloat)")
-                col3.metric("Type B Bleeders", bleeder_results['type_b'], help="High Clicks, Zero Sales")
-                col4.metric("Type C Ghosts", bleeder_results['type_c'], help="Low Volume (flagged for testing)")
+                col2.metric("Low Engagement", bleeder_results['type_a'], help="High impressions and low CTR outliers")
+                col3.metric("High-Cost Non-Converters", bleeder_results['type_b'], help="High-click terms with zero sales")
+                col4.metric("Low Visibility", bleeder_results['type_c'], help="Low-volume terms flagged for testing")
+                st.metric(
+                    "Cold-Start Step-Ups",
+                    bleeder_results.get('cold_start_stepups', 0),
+                    help="Low-volume zero-click terms with +$0.02 (or configured) bid increase",
+                )
+
+                with st.expander("View Bid Optimization Details"):
+                    if optimizer.df is not None:
+                        if 'Operation' in optimizer.df.columns:
+                            updated_rows = optimizer.df[optimizer.df['Operation'] == 'Update'].copy()
+                        else:
+                            updated_rows = pd.DataFrame()
+                        if updated_rows.empty:
+                            st.info("No bid updates were applied in this run.")
+                        else:
+                            detail_cols = [
+                                'Campaign Name', 'Ad Group Name', 'Keyword or Product Targeting',
+                                'Match Type', 'Impressions', 'Clicks', 'Spend', 'Sales', 'Bid', 'Bleeder_Type'
+                            ]
+                            available_cols = [col for col in detail_cols if col in updated_rows.columns]
+                            if 'Spend' in updated_rows.columns:
+                                updated_rows = updated_rows.sort_values('Spend', ascending=False)
+                            st.dataframe(updated_rows[available_cols].head(200), use_container_width=True)
+                            st.caption(f"Showing top {min(200, len(updated_rows))} of {len(updated_rows)} updated rows.")
 
                 # Display metrics - Structural Analysis (Phase 2)
                 st.subheader("Structural Analysis (Phase 2)")
@@ -323,6 +408,9 @@ if uploaded_file:
                     history_path=history_path,
                 )
 
+                if not run_nlp_analysis:
+                    st.info("NLP analysis is disabled for this run. Enable 'Run NLP Analysis' in the sidebar for clustering and negative recommendations.")
+
                 # Product Target Analysis Details
                 product_analysis_df = product_target_results.get('performance_analysis', pd.DataFrame())
                 if not product_analysis_df.empty and product_bleeder_counts.get('type_b', 0) > 0:
@@ -407,7 +495,7 @@ if uploaded_file:
                             st.dataframe(drift_df, use_container_width=True, hide_index=True)
 
                 # Generate markdown report
-                markdown_report = optimizer.generate_markdown_report()
+                markdown_report = optimizer.generate_markdown_report(include_nlp=run_nlp_analysis)
 
                 # Download buttons
                 st.subheader("Download Files")
@@ -422,6 +510,7 @@ if uploaded_file:
                         data=amazon_output,
                         file_name=f"amazon_upload_{timestamp}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        on_click="ignore",
                         use_container_width=True,
                         help="Clean file with only Amazon-recognized sheets. Upload this to Amazon Seller Central."
                     )
@@ -433,6 +522,7 @@ if uploaded_file:
                         data=markdown_report,
                         file_name=f"optimization_report_{timestamp}.md",
                         mime="text/markdown",
+                        on_click="ignore",
                         use_container_width=True,
                         help="Human-readable optimization report with all insights and recommendations."
                     )
@@ -444,6 +534,7 @@ if uploaded_file:
                         data=analysis_output,
                         file_name=f"full_analysis_{timestamp}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        on_click="ignore",
                         use_container_width=True,
                         help="Complete Excel file with all sheets including Test More Report and Budget Recommendations."
                     )
@@ -459,6 +550,7 @@ if uploaded_file:
                         data=negative_products_output,
                         file_name=f"negative_product_targets_{timestamp}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        on_click="ignore",
                         use_container_width=True,
                         help="ASINs to add to negative product targeting. Upload to Amazon to block wasteful product targets."
                     )
@@ -470,6 +562,7 @@ if uploaded_file:
                         data=negative_keywords_output,
                         file_name=f"negative_keywords_{timestamp}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        on_click="ignore",
                         use_container_width=True,
                         help="Search terms to add to negative keywords. Upload to Amazon to block wasteful search traffic."
                     )
@@ -481,6 +574,7 @@ if uploaded_file:
                         data=optimizer.get_optimization_log(),
                         file_name=f"optimization_log_{timestamp}.txt",
                         mime="text/plain",
+                        on_click="ignore",
                         use_container_width=True,
                         help="Plain-text audit log with timestamped optimization events."
                     )
@@ -489,7 +583,9 @@ if uploaded_file:
                 # Info messages
                 info_messages = []
                 if bleeder_results['type_c'] > 0:
-                    info_messages.append(f"{bleeder_results['type_c']} ghost keywords (Type C) flagged in 'Test More Report' sheet")
+                    info_messages.append(f"{bleeder_results['type_c']} low-visibility terms flagged in 'Test More Report' sheet")
+                if bleeder_results.get('cold_start_stepups', 0) > 0:
+                    info_messages.append(f"{bleeder_results['cold_start_stepups']} low-volume terms received cold-start bid step-up")
                 if cannibalization_count > 0:
                     info_messages.append(f"{cannibalization_count} cannibalization issues found in 'Cannibalization Report' sheet")
                 if campaign_count > 0:

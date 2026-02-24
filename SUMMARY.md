@@ -15,9 +15,11 @@ It ingests Amazon bulk Excel files, applies bid optimization and bleeder detecti
 - Automation: CLI supports both single-file and batch folder processing with summary export.
 - CI: GitHub Actions workflow runs pytest on push/PR.
 - Deployment: Dockerized runtime and environment profiles (`local`/`dev`/`prod`) are implemented.
+- Online app readiness: Streamlit Cloud entrypoint and config are in place (`streamlit_app.py`, `.streamlit/config.toml`).
 
 ## Key Files
 - `src/app.py`: Streamlit UI, orchestrates full pipeline and download generation.
+- `streamlit_app.py`: root Streamlit entrypoint for local/Cloud deploy.
 - `src/cli.py`: Command-line entrypoint for non-UI and automation workflows.
 - `src/optimizer.py`: all optimization/analysis logic.
 - `src/settings.py`: runtime profile loader (`APP_ENV` + profile files).
@@ -48,12 +50,15 @@ It ingests Amazon bulk Excel files, applies bid optimization and bleeder detecti
    - Negative keywords Excel
 10. In CLI batch mode, writes a batch summary CSV with per-file outcomes.
 11. Records run history and checks drift against recent successful baseline.
+12. Supports configurable low-volume handling mode (`fixed`, `percentile`, `zscore`) and optional cold-start bid step-up.
 
 ## Implemented Features (Code-Verified)
 - RPC-based bid optimization (`optimize_bids`)
 - 48-hour attribution rule (`check_48_hour_rule`)
 - Bid safety rails (min/max bids, ±20% change bounds, low-data handling)
 - Keyword/Product Target bleeder detection (`identify_bleeders`)
+- User-friendly keyword classifications (Low Engagement, High-Cost Non-Converter, Low Visibility)
+- Cold-start step-up for low-visibility zero-click terms (default +$0.02, configurable)
 - Test More report for low-volume terms (`generate_test_more_report`)
 - Output integrity validation (`validate_output`)
 - Amazon upload-safe export + full analysis export (`save_optimized_file`)
@@ -82,6 +87,7 @@ From `requirements.txt`:
 - NLP clustering requires search term report sheets in the workbook (`SP Search Term Report` and/or `SB Search Term Report`).
 - Amazon upload file intentionally excludes analysis/problematic sheets; full analysis file includes added reports.
 - Advanced optimization thresholds are configurable from Streamlit sidebar (`Advanced Thresholds`).
+- NLP stage can be toggled per run in UI for restricted environments.
 
 ## Gaps / Risks To Address Next
 - Large-file performance and model-loading latency remain potential bottlenecks.

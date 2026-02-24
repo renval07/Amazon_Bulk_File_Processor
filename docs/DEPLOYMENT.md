@@ -42,7 +42,7 @@ so generated reports/history remain on the host.
 ### Streamlit
 
 ```bash
-APP_ENV=local streamlit run src/app.py
+APP_ENV=local streamlit run streamlit_app.py
 ```
 
 ### CLI
@@ -50,3 +50,13 @@ APP_ENV=local streamlit run src/app.py
 ```bash
 python -m src.cli --env prod --input "data/samples/example.xlsx"
 ```
+
+## Streamlit Cloud
+
+Use these app settings on Streamlit Cloud:
+
+- Main file path: `streamlit_app.py`
+- Python dependencies: `requirements.txt`
+- Optional environment variable: `APP_ENV=prod`
+
+If NLP model download is restricted, disable NLP in the sidebar (`Run NLP Analysis`) for those runs.

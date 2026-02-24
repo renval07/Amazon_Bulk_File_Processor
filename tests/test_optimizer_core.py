@@ -64,6 +64,10 @@ def test_input_validation_rejects_invalid_values(sample_file_path):
         BulkOptimizer(str(sample_file_path), min_bid=5.0, max_bid=1.0)
     with pytest.raises(ValueError):
         BulkOptimizer(str(sample_file_path), max_bid_change_pct=1.5)
+    with pytest.raises(ValueError):
+        BulkOptimizer(str(sample_file_path), bleeder_type_c_mode="unknown")
+    with pytest.raises(ValueError):
+        BulkOptimizer(str(sample_file_path), bleeder_type_c_percentile=1.5)
 
 
 def test_performance_metrics_record_and_read(optimizer):

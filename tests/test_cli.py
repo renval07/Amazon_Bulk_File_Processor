@@ -17,6 +17,12 @@ def test_cli_parser_defaults():
     assert args.max_bid == 5.00
     assert args.disable_48hr_rule is False
     assert args.skip_nlp is False
+    assert args.bleeder_type_c_mode == "fixed"
+    assert args.bleeder_type_c_impressions_threshold == 100
+    assert args.bleeder_type_c_percentile == 0.25
+    assert args.bleeder_type_c_z_threshold == -1.0
+    assert args.cold_start_step_up == 0.02
+    assert args.disable_cold_start is False
 
 
 def test_cli_parser_input_dir_mode():

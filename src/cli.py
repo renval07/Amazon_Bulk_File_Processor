@@ -96,6 +96,41 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.5,
         help="Max ACOS threshold for negative keyword recommendations (default: 1.5 = 150%%)",
     )
+    parser.add_argument(
+        "--bleeder-type-c-mode",
+        choices=["fixed", "percentile", "zscore"],
+        default="fixed",
+        help="Type C low-volume detection mode (default: fixed)",
+    )
+    parser.add_argument(
+        "--bleeder-type-c-impressions-threshold",
+        type=int,
+        default=100,
+        help="Type C fixed-mode max impressions threshold (default: 100)",
+    )
+    parser.add_argument(
+        "--bleeder-type-c-percentile",
+        type=float,
+        default=0.25,
+        help="Type C percentile mode cutoff as decimal (default: 0.25)",
+    )
+    parser.add_argument(
+        "--bleeder-type-c-z-threshold",
+        type=float,
+        default=-1.0,
+        help="Type C zscore mode cutoff on log impressions (default: -1.0)",
+    )
+    parser.add_argument(
+        "--cold-start-step-up",
+        type=float,
+        default=0.02,
+        help="Cold-start bid increase for low-volume zero-click terms (default: 0.02)",
+    )
+    parser.add_argument(
+        "--disable-cold-start",
+        action="store_true",
+        help="Disable cold-start bid step-up logic",
+    )
     return parser
 
 
@@ -119,6 +154,12 @@ def _run_single_file(args: argparse.Namespace, input_path: Path, output_dir: Pat
             min_bid=args.min_bid,
             max_bid=args.max_bid,
             enforce_48hr_rule=not args.disable_48hr_rule,
+            bleeder_type_c_mode=args.bleeder_type_c_mode,
+            bleeder_type_c_impressions_threshold=args.bleeder_type_c_impressions_threshold,
+            bleeder_type_c_percentile=args.bleeder_type_c_percentile,
+            bleeder_type_c_z_threshold=args.bleeder_type_c_z_threshold,
+            cold_start_step_up_amount=args.cold_start_step_up,
+            cold_start_enable=not args.disable_cold_start,
         )
 
         warning = optimizer.check_48_hour_rule()
@@ -218,7 +259,8 @@ def _run_single_file(args: argparse.Namespace, input_path: Path, output_dir: Pat
             "  Bleeders: "
             f"A={bleeder_results.get('type_a', 0)}, "
             f"B={bleeder_results.get('type_b', 0)}, "
-            f"C={bleeder_results.get('type_c', 0)}"
+            f"C={bleeder_results.get('type_c', 0)}, "
+            f"ColdStart={bleeder_results.get('cold_start_stepups', 0)}"
         )
         print(f"  Cannibalization issues: {len(cannibalization)}")
         print(f"  Campaigns analyzed for budgets: {len(budget_recs)}")

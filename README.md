@@ -41,7 +41,7 @@ pip install -r requirements-dev.txt
 ### 2. Run the App
 
 ```bash
-streamlit run src/app.py
+streamlit run streamlit_app.py
 ```
 
 ### 3. Use the Tool
@@ -100,6 +100,9 @@ python -m src.cli --input-dir "data/samples" --pattern "*bulk*.xlsx" --recursive
 # Tune NLP clustering and negative keyword thresholds
 python -m src.cli --input "bulk.xlsx" --n-clusters 8 --min-cluster-size 10 --negative-keyword-min-spend 15 --negative-keyword-max-acos 1.2
 
+# Configure low-volume handling and cold-start step-up
+python -m src.cli --input "bulk.xlsx" --bleeder-type-c-mode percentile --bleeder-type-c-percentile 0.20 --cold-start-step-up 0.02
+
 # Show all available options
 python -m src.cli --help
 ```
@@ -148,10 +151,12 @@ Use `env/*.env.example` as templates for environment files.
 |---------|---------|-------------|
 | **Min Clicks for Optimization** | 10 | Minimum clicks required before RPC bid updates are applied |
 | **Max Bid Change per Run** | 20% | Caps bid movement up/down in one run |
-| **Type A Min Impressions** | 1000 | Minimum impressions before low-CTR Type A detection applies |
-| **Type A Z-Score Threshold** | -1.5 | Cutoff for low-CTR outlier detection |
-| **Type B Click StdDev Multiplier** | 2.0 | Controls strictness of click-heavy zero-sale Type B detection |
-| **Type C Max Impressions** | 100 | Max impressions before a term is considered a Type C ghost keyword |
+| **Low Engagement Min Impressions** | 1000 | Minimum impressions before low-CTR detection applies |
+| **Low Engagement Z-Score Threshold** | -1.5 | Cutoff for low-CTR outlier detection |
+| **High-Cost Non-Converter StdDev Multiplier** | 2.0 | Controls strictness of click-heavy zero-sale detection |
+| **Low Visibility Mode** | fixed | `fixed`, `percentile`, or `zscore` low-volume detection |
+| **Low Visibility Max Impressions** | 100 | Used when mode = `fixed` |
+| **Cold-Start Step-Up** | $0.02 | Bid increase for low-volume zero-click terms |
 
 ## How It Works
 
@@ -173,9 +178,10 @@ With safety constraints:
 Uses Z-score analysis to identify:
 
 **For Keywords:**
-- **Type A**: Low CTR (impression bloat) → Reduce bid
-- **Type B**: High clicks, zero sales (wasteful spend) → Reduce to scouting level
-- **Type C**: Low impressions (<100) → Flag for "Test More" report (no bid change)
+- **Low Engagement**: Low CTR outliers with sufficient impressions → Reduce bid
+- **High-Cost Non-Converter**: High clicks + zero sales → Reduce to scouting level
+- **Low Visibility**: Low-volume terms → Flag for "Test More" report
+- **Cold-Start Step-Up**: Low-visibility terms with zero clicks/sales → increase bid by configured amount (default $0.02)
 
 **For Product Targets (ASINs):** 🆕
 - **Type A**: Low CTR (Z-score < -1.5) → Reduce bid
@@ -244,6 +250,31 @@ Possible reasons:
 - Keywords have <10 clicks (need more data)
 - Current bids already align with target ACOS
 - Min/max bid limits are too restrictive
+
+### NLP clustering shows 0 clusters
+
+Possible reasons:
+- Model download is blocked in your environment
+- Not enough valid search-term rows
+
+Fix options:
+1. Enable internet/model cache for `sentence-transformers`
+2. Disable NLP for the run (sidebar `Run NLP Analysis` or CLI `--skip-nlp`)
+
+## Streamlit Cloud Deployment
+
+This repo is ready for Streamlit Cloud:
+
+1. Push to GitHub.
+2. In Streamlit Cloud, set:
+   - Repository: this project
+   - Branch: `main`
+   - Main file path: `streamlit_app.py`
+3. Deploy.
+
+Notes:
+- First NLP run may take longer while model files are downloaded.
+- If your cloud environment blocks model download, disable NLP per run.
 
 ## Project Structure
 

@@ -9,6 +9,10 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 
 class BulkOptimizer:
+    TYPE_A_LABEL = "Low Engagement"
+    TYPE_B_LABEL = "High-Cost Non-Converter"
+    TYPE_C_LABEL = "Low Visibility"
+
     def __init__(
         self,
         file_source,
@@ -24,6 +28,11 @@ class BulkOptimizer:
         bleeder_type_a_z_threshold=-1.5,
         bleeder_type_b_clicks_std_multiplier=2.0,
         bleeder_type_c_impressions_threshold=100,
+        bleeder_type_c_mode="fixed",
+        bleeder_type_c_percentile=0.25,
+        bleeder_type_c_z_threshold=-1.0,
+        cold_start_step_up_amount=0.02,
+        cold_start_enable=True,
     ):
         # Input validation
         if target_acos <= 0 or target_acos > 1:
@@ -42,6 +51,12 @@ class BulkOptimizer:
             raise ValueError("bleeder_type_c_impressions_threshold must be non-negative")
         if bleeder_type_b_clicks_std_multiplier < 0:
             raise ValueError("bleeder_type_b_clicks_std_multiplier must be non-negative")
+        if bleeder_type_c_mode not in {"fixed", "percentile", "zscore"}:
+            raise ValueError("bleeder_type_c_mode must be one of: fixed, percentile, zscore")
+        if bleeder_type_c_percentile <= 0 or bleeder_type_c_percentile >= 1:
+            raise ValueError("bleeder_type_c_percentile must be between 0 and 1 (exclusive)")
+        if cold_start_step_up_amount < 0:
+            raise ValueError("cold_start_step_up_amount must be non-negative")
 
         self.file_source = file_source
         self.filename = filename or (file_source if isinstance(file_source, str) else "")
@@ -55,6 +70,11 @@ class BulkOptimizer:
         self.bleeder_type_a_z_threshold = bleeder_type_a_z_threshold
         self.bleeder_type_b_clicks_std_multiplier = bleeder_type_b_clicks_std_multiplier
         self.bleeder_type_c_impressions_threshold = bleeder_type_c_impressions_threshold
+        self.bleeder_type_c_mode = bleeder_type_c_mode
+        self.bleeder_type_c_percentile = bleeder_type_c_percentile
+        self.bleeder_type_c_z_threshold = bleeder_type_c_z_threshold
+        self.cold_start_step_up_amount = cold_start_step_up_amount
+        self.cold_start_enable = cold_start_enable
         self.df = None
         self.original_sheets = {}
         self.file_end_date = None
@@ -265,8 +285,8 @@ class BulkOptimizer:
         """
         Identifies bleeders using Z-Scores and adjusts bids.
         Type A: Low CTR (Impression Bloat) -> Reduce Bid
-        Type B: Click-Happy (Wasteful Spend) -> Reduce Bid
-        Type C: Ghost Keywords (Low Volume) -> Flag for "Test More"
+        Type B: Click-heavy non-converting terms -> Reduce Bid
+        Type C: Low volume terms -> Flag for "Test More"
 
         Returns: dict with counts by bleeder type
         """
@@ -313,14 +333,41 @@ class BulkOptimizer:
         click_threshold = mean_clicks + (self.bleeder_type_b_clicks_std_multiplier * std_clicks)
         type_b_mask = (mask) & (self.df['Clicks'] > click_threshold) & (self.df['Sales'] == 0)
 
-        # Type C: Ghost Keywords (Low Volume)
-        # Logic: Impressions < threshold
-        # Action: Flag for "Test More" report (no bid reduction)
-        type_c_mask = (
-            (mask)
-            & (self.df['Impressions'] < self.bleeder_type_c_impressions_threshold)
-            & (self.df['Impressions'] > 0)
-        )
+        # Type C: Low volume terms (configurable mode)
+        positive_impressions = stats_df[stats_df['Impressions'] > 0]['Impressions']
+        if positive_impressions.empty:
+            type_c_mask = mask & False
+            type_c_threshold_desc = "n/a"
+        elif self.bleeder_type_c_mode == "fixed":
+            type_c_mask = (
+                (mask)
+                & (self.df['Impressions'] < self.bleeder_type_c_impressions_threshold)
+                & (self.df['Impressions'] > 0)
+            )
+            type_c_threshold_desc = f"impressions < {self.bleeder_type_c_impressions_threshold}"
+        elif self.bleeder_type_c_mode == "percentile":
+            threshold_value = positive_impressions.quantile(self.bleeder_type_c_percentile)
+            type_c_mask = (
+                (mask)
+                & (self.df['Impressions'] <= threshold_value)
+                & (self.df['Impressions'] > 0)
+            )
+            pct = int(self.bleeder_type_c_percentile * 100)
+            type_c_threshold_desc = f"impressions <= p{pct} ({threshold_value:.1f})"
+        else:
+            log_impressions = np.log1p(positive_impressions)
+            mean_log_imp = log_impressions.mean()
+            std_log_imp = log_impressions.std()
+            if std_log_imp <= 0:
+                z_log_imp = pd.Series(0, index=stats_df.index)
+            else:
+                z_log_imp = (np.log1p(stats_df['Impressions']) - mean_log_imp) / std_log_imp
+            type_c_mask = (
+                (mask)
+                & (self.df['Impressions'] > 0)
+                & (self.df.index.isin(stats_df[z_log_imp < self.bleeder_type_c_z_threshold].index))
+            )
+            type_c_threshold_desc = f"log-impression z < {self.bleeder_type_c_z_threshold:.2f}"
 
         # Add a flag column for bleeders (for reporting/analysis)
         if 'Bleeder_Type' not in self.df.columns:
@@ -334,25 +381,46 @@ class BulkOptimizer:
         # Apply Type A (Aggressive reduction)
         self.df.loc[type_a_mask, 'Bid'] = self.min_bid
         self.df.loc[type_a_mask, 'Operation'] = 'Update'
-        self.df.loc[type_a_mask, 'Bleeder_Type'] = 'Type A: Low CTR'
+        self.df.loc[type_a_mask, 'Bleeder_Type'] = self.TYPE_A_LABEL
 
         # Apply Type B (Lower to scouting level)
         self.df.loc[type_b_mask, 'Bid'] = self.min_bid
         self.df.loc[type_b_mask, 'Operation'] = 'Update'
-        self.df.loc[type_b_mask, 'Bleeder_Type'] = 'Type B: Click-Happy'
+        self.df.loc[type_b_mask, 'Bleeder_Type'] = self.TYPE_B_LABEL
 
         # Apply Type C (Flag only, no bid change)
-        self.df.loc[type_c_mask, 'Bleeder_Type'] = 'Type C: Ghost Keyword'
-        # Note: No bid changes for Type C per spec
+        self.df.loc[type_c_mask, 'Bleeder_Type'] = self.TYPE_C_LABEL
+
+        # Cold-start step-up: nudge low-volume terms with zero clicks to gather signal
+        cold_start_mask = (
+            type_c_mask
+            & (self.df['Clicks'] == 0)
+            & (self.df['Sales'] == 0)
+            & (~type_a_mask)
+            & (~type_b_mask)
+        )
+        cold_start_count = int(cold_start_mask.sum())
+        if self.cold_start_enable and cold_start_count > 0:
+            self.df.loc[cold_start_mask, 'Bid'] = np.clip(
+                self.df.loc[cold_start_mask, 'Bid'] + self.cold_start_step_up_amount,
+                self.min_bid,
+                self.max_bid,
+            )
+            self.df.loc[cold_start_mask, 'Operation'] = 'Update'
 
         # Log results
         self._log(f"Bleeder detection complete:")
         if type_a_count > 0:
-            self._log(f"  - Type A (Low CTR): {type_a_count} keywords reduced to ${self.min_bid}")
+            self._log(f"  - {self.TYPE_A_LABEL}: {type_a_count} keywords reduced to ${self.min_bid}")
         if type_b_count > 0:
-            self._log(f"  - Type B (Click-Happy): {type_b_count} keywords reduced to ${self.min_bid}")
+            self._log(f"  - {self.TYPE_B_LABEL}: {type_b_count} keywords reduced to ${self.min_bid}")
         if type_c_count > 0:
-            self._log(f"  - Type C (Ghost Keywords): {type_c_count} keywords flagged for testing (no bid change)")
+            self._log(f"  - {self.TYPE_C_LABEL}: {type_c_count} keywords flagged for testing ({type_c_threshold_desc})")
+        if self.cold_start_enable and cold_start_count > 0:
+            self._log(
+                f"  - Cold-start step-up: {cold_start_count} low-volume zero-click terms increased by "
+                f"${self.cold_start_step_up_amount:.2f}"
+            )
 
         if type_a_count + type_b_count + type_c_count == 0:
             self._log("  - No bleeders detected")
@@ -361,6 +429,7 @@ class BulkOptimizer:
             'type_a': type_a_count,
             'type_b': type_b_count,
             'type_c': type_c_count,
+            'cold_start_stepups': cold_start_count if self.cold_start_enable else 0,
             'total': type_a_count + type_b_count + type_c_count
         }
 
@@ -404,14 +473,14 @@ class BulkOptimizer:
 
     def generate_test_more_report(self):
         """
-        Generates a report of Type C (Ghost Keywords) that need more testing.
+        Generates a report of low-visibility terms that need more testing.
         Returns: DataFrame with low-impression keywords
         """
         if self.df is None:
             return pd.DataFrame()
 
         type_c_keywords = self.df[
-            (self.df['Bleeder_Type'] == 'Type C: Ghost Keyword')
+            (self.df['Bleeder_Type'] == self.TYPE_C_LABEL)
         ].copy()
 
         if not type_c_keywords.empty:
@@ -424,7 +493,7 @@ class BulkOptimizer:
             available_cols = [col for col in report_cols if col in type_c_keywords.columns]
             type_c_keywords = type_c_keywords[available_cols]
 
-        self._log(f"Generated Test More report with {len(type_c_keywords)} ghost keywords")
+        self._log(f"Generated Test More report with {len(type_c_keywords)} low-visibility keywords")
         return type_c_keywords
 
     def save_optimized_file(self, output_path, include_analysis_sheets=True, amazon_upload_ready=False):

@@ -17,12 +17,22 @@ All notable changes to this project are documented in this file.
 - Runtime profile system (`local`/`dev`/`prod`) in `config/profiles`.
 - Container packaging via `Dockerfile` and `docker-compose.yml`.
 - Deployment guide `docs/DEPLOYMENT.md` and env templates in `env/*.env.example`.
+- Configurable Type C low-volume modes (`fixed`, `percentile`, `zscore`) across optimizer, CLI, and UI.
+- Cold-start step-up policy for low-volume zero-click terms (default `+$0.02`, configurable).
+- Streamlit root entrypoint `streamlit_app.py` and `.streamlit/config.toml` for online deployment.
+- Output improvement notes in `docs/OUTPUT_IMPROVEMENTS.md`.
 
 ### Changed
 - Reorganized repository layout for GitHub readiness (`docs/`, `data/samples/`, archived legacy docs/tests).
 - Pinned runtime dependencies in `requirements.txt`.
 - Added `requirements-dev.txt` and `pytest.ini`.
 - CLI and UI now honor runtime profile defaults and history paths.
+- Keyword bleeder naming updated to user-friendly labels:
+  - `Low Engagement`
+  - `High-Cost Non-Converter`
+  - `Low Visibility`
+- Streamlit UI now includes a collapsible bid-optimization details table.
+- Streamlit UI supports per-run NLP toggle for restricted environments.
 
 ### Archived
 - Legacy script-style test runners moved to `archive/tests_legacy/`.

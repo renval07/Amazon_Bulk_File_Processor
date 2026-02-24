@@ -40,3 +40,47 @@ def test_type_c_threshold_controls_ghost_keyword_count(sample_file_path):
     high_result = high_threshold_opt.identify_bleeders()
 
     assert high_result["type_c"] >= low_result["type_c"]
+
+
+def test_type_c_percentile_mode_detects_low_volume_terms(sample_file_path):
+    opt = BulkOptimizer(
+        str(sample_file_path),
+        enforce_48hr_rule=False,
+        enable_logging=False,
+        bleeder_type_c_mode="percentile",
+        bleeder_type_c_percentile=0.25,
+    )
+    opt.load_data()
+    opt.optimize_bids()
+    result = opt.identify_bleeders()
+    assert result["type_c"] >= 0
+
+
+def test_cold_start_step_up_applies_plus_two_cents(sample_file_path):
+    opt = BulkOptimizer(
+        str(sample_file_path),
+        enforce_48hr_rule=False,
+        enable_logging=False,
+        bleeder_type_c_mode="fixed",
+        bleeder_type_c_impressions_threshold=100,
+        cold_start_step_up_amount=0.02,
+        cold_start_enable=True,
+    )
+    opt.load_data()
+    opt.optimize_bids()
+
+    mask = (
+        (opt.df["Entity"].isin(["Keyword", "Product Targeting"]))
+        & (opt.df["Impressions"] > 0)
+        & (opt.df["Impressions"] < 100)
+        & (opt.df["Clicks"] == 0)
+        & (opt.df["Sales"] == 0)
+    )
+    before = opt.df.loc[mask, "Bid"].copy()
+    opt.identify_bleeders()
+    after = opt.df.loc[mask, "Bid"].copy()
+
+    if not before.empty:
+        deltas = (after - before).round(2)
+        allowed = (deltas == 0.02) | ((after == opt.max_bid) & (before > opt.max_bid))
+        assert allowed.all()

@@ -66,6 +66,7 @@ Exit Criteria:
 - Data visualizations for metric trends
 - Email/notification hooks for long runs
 - More granular unit tests around statistical methods
+- Streamlit Cloud production hardening (model cache + resource controls)
 
 ## 5. Governance
 - This file is the authoritative roadmap.
@@ -96,3 +97,9 @@ Exit Criteria:
 - 2026-02-24: Added runtime environment profiles (`config/profiles/local|dev|prod.json`) and wired profile selection into CLI/UI (`APP_ENV`, CLI `--env`).
 - 2026-02-24: Added container packaging (`Dockerfile`, `docker-compose.yml`, `.dockerignore`) with mounted outputs/data volumes.
 - 2026-02-24: Updated release/deployment documentation (`CHANGELOG.md`, `RELEASE_CHECKLIST.md`, `docs/DEPLOYMENT.md`, `env/*.env.example`) for repeatable release flow.
+- 2026-02-24: Renamed keyword bleeder types in UI/outputs to user-friendly labels (Low Engagement, High-Cost Non-Converter, Low Visibility).
+- 2026-02-24: Implemented cold-start step-up policy (+$0.02 configurable) for low-visibility zero-click terms.
+- 2026-02-24: Added configurable Type C low-visibility detection modes (`fixed`, `percentile`, `zscore`) in optimizer, CLI, and UI.
+- 2026-02-24: Added collapsible "View Bid Optimization Details" table in Streamlit for row-level update review.
+- 2026-02-24: Added Streamlit Cloud entrypoint/config (`streamlit_app.py`, `.streamlit/config.toml`) and deployment documentation updates.
+- 2026-02-24: Added `docs/OUTPUT_IMPROVEMENTS.md` with data-driven improvement opportunities from live-file validation.
