@@ -113,3 +113,4 @@ Exit Criteria:
 - 2026-02-24: Streamlit UX hardening: switched default theme to dark mode and reduced rerun overhead by caching unified-download workbook generation/Excel sheet reads.
 - 2026-02-24: Deployment hardening for SaaS startup reliability: made `sentence-transformers` optional (`requirements-nlp.txt`) and added TF-IDF fallback for intent clustering when semantic model dependencies are unavailable.
 - 2026-02-24: Amazon upload compatibility hardening: enforced single-product negative exports (Sponsored Products), excluded unsupported `keyword-group` SP targeting rows from upload files, and added regression tests for both cases.
+- 2026-02-24: CI stability hardening: replaced gitignored sample-file dependency in tests with a generated synthetic bulk workbook fixture so GitHub Actions runs without local sample assets.
