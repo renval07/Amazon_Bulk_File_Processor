@@ -21,7 +21,7 @@ Build a reliable Amazon PPC bulk-file optimization platform that is safe for pro
 
 ### P0 - Documentation and Reliability (Now)
 - Status: Complete (2026-02-24)
-- [x] Consolidate docs around this roadmap + `README.md` + `SUMMARY.md`
+- [x] Consolidate docs around this roadmap + `README.md`
 - [x] Replace script-style tests with `pytest` test suite
 - [x] Add CI test run (GitHub Actions or equivalent)
 - [x] Pin dependency versions for reproducible installs
@@ -73,11 +73,11 @@ Exit Criteria:
 - Historical phase/status docs are archived in `archive/docs/`.
 - Any roadmap change should update:
   - this file (`ROADMAP.md`)
-  - impact summary in `SUMMARY.md` if architecture/workflow changes
+  - relevant user/deployment instructions in `README.md` and `docs/`
 
 ## 6. Milestone Log
 - 2026-02-24: Archived stale status docs into `archive/docs/` and created `archive/docs/README.md`.
-- 2026-02-24: Created authoritative `ROADMAP.md` and aligned `README.md` + `SUMMARY.md` references.
+- 2026-02-24: Created authoritative `ROADMAP.md` and aligned top-level documentation references.
 - 2026-02-24: Started pytest migration by adding baseline tests in `tests/` (`conftest.py`, core, structural).
 - 2026-02-24: Verified pytest baseline with `python -m pytest tests/` (7 passed).
 - 2026-02-24: Pinned direct project dependencies in `requirements.txt` for reproducible setup.
@@ -102,10 +102,11 @@ Exit Criteria:
 - 2026-02-24: Added configurable Type C low-visibility detection modes (`fixed`, `percentile`, `zscore`) in optimizer, CLI, and UI.
 - 2026-02-24: Added collapsible "View Bid Optimization Details" table in Streamlit for row-level update review.
 - 2026-02-24: Added Streamlit Cloud entrypoint/config (`streamlit_app.py`, `.streamlit/config.toml`) and deployment documentation updates.
-- 2026-02-24: Added `docs/OUTPUT_IMPROVEMENTS.md` with data-driven improvement opportunities from live-file validation.
-- 2026-02-24: Completed pre-deployment technical/PPC audit and published `docs/PREDEPLOY_AUDIT.md` with prioritized hardening plan.
+- 2026-02-24: Added `archive/docs/OUTPUT_IMPROVEMENTS.md` with data-driven improvement opportunities from live-file validation.
+- 2026-02-24: Completed pre-deployment technical/PPC audit and published `archive/docs/PREDEPLOY_AUDIT.md` with prioritized hardening plan.
 - 2026-02-24: Completed Phase A hardening pass: lazy NLP dependency loading, precomputed analysis reuse in exports/reports, Streamlit session-state result caching, and pytest archive isolation.
 - 2026-02-24: Started Phase B with segmented bleeder baselines, confidence gating, ladder/stalled cold-start lifecycle controls, and low-intent-cluster filtering for negative keyword exports (UI/CLI + tests).
 - 2026-02-24: Completed Phase C deployment hardening: added `runtime.txt` Python pin for Streamlit Cloud, aligned docs with advisory-only 48-hour behavior, documented optional NLP mode defaults, and added smoke-check guidance.
 - 2026-02-24: Completed Phase C smoke validation on sample file (`34 passed, 1 skipped` tests, CLI optimize/export pass, and re-upload parse/optimize pass on generated Amazon upload file).
 - 2026-02-24: Performed repository hygiene for GitHub readiness: hardened `.gitignore`, added `.gitattributes`, removed obsolete `archive/misc/_ul`, and added `docs/GITHUB_DESKTOP.md` workflow guidance.
+- 2026-02-24: Cleaned documentation to one status source of truth (`ROADMAP.md`): archived `SUMMARY.md` and historical docs (`CLAUDE`, `gemini`, predeploy/output analysis) into `archive/docs/`, keeping only active docs in `docs/`.

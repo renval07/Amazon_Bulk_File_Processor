@@ -8,7 +8,6 @@ These files were preserved for reference but may contain outdated status stateme
 ## Current Source of Truth
 - `ROADMAP.md` (authoritative roadmap)
 - `README.md` (user guide)
-- `SUMMARY.md` (working technical summary)
 
 ## Archived Files
 - `AMAZON_UPLOAD_FIX.md`
@@ -18,3 +17,8 @@ These files were preserved for reference but may contain outdated status stateme
 - `PHASE3_COMPLETE.md`
 - `PRIORITY2_FEATURES.md`
 - `PROJECT_STATUS.md`
+- `SUMMARY.md`
+- `PREDEPLOY_AUDIT.md`
+- `OUTPUT_IMPROVEMENTS.md`
+- `CLAUDE.md`
+- `gemini.md`

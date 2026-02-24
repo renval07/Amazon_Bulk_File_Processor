@@ -1,8 +1,7 @@
 # Documentation Index
 
-- `CLAUDE.md`: developer/assistant implementation guidance.
-- `gemini.md`: original product specification source.
+- `DEPLOYMENT.md`: deployment/runtime guidance (local, Docker, Streamlit Cloud).
 - `GITHUB_DESKTOP.md`: safe commit/push checklist for GitHub Desktop usage.
-- Current planning and status are at project root:
-  - `ROADMAP.md`
-  - `SUMMARY.md`
+
+Project status and milestones source of truth:
+- `ROADMAP.md` (root)

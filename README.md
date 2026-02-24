@@ -2,6 +2,8 @@
 
 A Python-based tool for automating Amazon PPC bid optimizations using **statistical methods** and **NLP-powered semantic intelligence** instead of arbitrary rules.
 
+Project status/source of truth: `ROADMAP.md`
+
 ## Features
 
 ### Core Optimization (Phase 1-2)
@@ -298,11 +300,11 @@ tests/              # Pytest suite (active)
 data/
 └── samples/        # Local sample input files (gitignored by default)
 docs/
-├── CLAUDE.md       # Developer instructions
-└── gemini.md       # Original project specification (historical reference)
+├── DEPLOYMENT.md   # Deployment guide (local/Docker/Streamlit Cloud)
+├── GITHUB_DESKTOP.md # GitHub Desktop commit/push workflow
+└── README.md       # Documentation index
 
 ROADMAP.md          # Authoritative roadmap (single source of truth)
-SUMMARY.md          # Working technical summary
 CHANGELOG.md        # Change history
 RELEASE_CHECKLIST.md # First GitHub release checklist
 README.md           # User guide
@@ -337,7 +339,6 @@ All tests should pass before using the tool on production data.
 
 ## Development
 
-See **docs/CLAUDE.md** for detailed developer instructions.
 For day-to-day commits with GitHub Desktop, use **docs/GITHUB_DESKTOP.md**.
 
 ## License
@@ -348,8 +349,8 @@ MIT License - see `LICENSE`.
 
 For issues or questions:
 1. Review **ROADMAP.md** for current priorities and status
-2. Review **SUMMARY.md** for architecture/workflow context
-3. Check **archive/docs/** for historical phase/status notes
+2. Review this **README.md** for setup/workflow details
+3. Check **archive/docs/** for historical notes and retired documentation
 4. Run `python -m pytest tests/` to verify installation
 
 ---

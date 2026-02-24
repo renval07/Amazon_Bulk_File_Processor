@@ -20,7 +20,7 @@ All notable changes to this project are documented in this file.
 - Configurable Type C low-volume modes (`fixed`, `percentile`, `zscore`) across optimizer, CLI, and UI.
 - Cold-start step-up policy for low-volume zero-click terms (default `+$0.02`, configurable).
 - Streamlit root entrypoint `streamlit_app.py` and `.streamlit/config.toml` for online deployment.
-- Output improvement notes in `docs/OUTPUT_IMPROVEMENTS.md`.
+- Output improvement notes in `archive/docs/OUTPUT_IMPROVEMENTS.md`.
 
 ### Changed
 - Reorganized repository layout for GitHub readiness (`docs/`, `data/samples/`, archived legacy docs/tests).
