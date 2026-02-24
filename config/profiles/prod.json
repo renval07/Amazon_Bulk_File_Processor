@@ -6,7 +6,8 @@
     "target_acos": 0.3,
     "min_bid": 0.02,
     "max_bid": 5.0,
-    "enforce_48hr_rule": true
+    "enforce_48hr_rule": true,
+    "run_nlp_analysis": false
   },
   "streamlit": {
     "server_address": "0.0.0.0",

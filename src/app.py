@@ -121,7 +121,7 @@ max_bid = st.sidebar.number_input("Max Bid ($)", value=float(profile_ui.get("max
 st.sidebar.header("Safety Settings")
 run_nlp_analysis = st.sidebar.checkbox(
     "Run NLP Analysis",
-    value=True,
+    value=bool(profile_ui.get("run_nlp_analysis", True)),
     help="Disable this if model download is restricted in your environment."
 )
 

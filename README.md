@@ -7,7 +7,7 @@ A Python-based tool for automating Amazon PPC bid optimizations using **statisti
 ### Core Optimization (Phase 1-2)
 - **Revenue-Per-Click (RPC) Optimization**: More stable than ACOS-only targeting
 - **Statistical Bleeder Detection**: Identifies underperforming keywords using Z-scores (Types A, B, C)
-- **48-Hour Attribution Safety**: Prevents optimization on incomplete data
+- **48-Hour Freshness Advisory**: Warns when filename date range is within 48 hours
 - **Safety Rails**: ±20% max bid changes, min/max bid limits, minimum data thresholds
 - **Cannibalization Detection**: Finds duplicate keywords across ad groups
 - **Budget Optimization**: ROAS-based budget recommendations
@@ -61,6 +61,7 @@ Runtime profiles are supported for `local`, `dev`, and `prod`.
 - CLI override: `--env local|dev|prod`
 
 Profile files are in `config/profiles/`.
+- `prod` profile defaults NLP analysis to off for Streamlit Cloud stability.
 
 ## CLI Mode
 
@@ -88,7 +89,7 @@ python -m src.cli --input "bulk.xlsx" --target-acos 0.30 --min-bid 0.10 --max-bi
 # Write outputs to a custom folder
 python -m src.cli --input "bulk.xlsx" --output-dir "outputs/run_01"
 
-# Disable 48-hour safety rule (not recommended)
+# Hide 48-hour advisory warning output (legacy compatibility flag)
 python -m src.cli --input "bulk.xlsx" --disable-48hr-rule
 
 # Skip NLP phase for faster runs
@@ -141,9 +142,9 @@ Use `env/*.env.example` as templates for environment files.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Target ACOS** | 30% | Your target Advertising Cost of Sale |
-| **Min Bid** | $0.10 | Minimum bid floor |
+| **Min Bid** | $0.02 | Minimum bid floor |
 | **Max Bid** | $5.00 | Maximum bid ceiling |
-| **Enforce 48-Hour Rule** | ✓ Enabled | Block files with incomplete attribution |
+| **48-Hour Freshness Check** | Advisory | Warns for likely incomplete attribution windows |
 
 ### Advanced Thresholds (Sidebar)
 
@@ -216,8 +217,8 @@ No manual formatting needed - just download and upload to Seller Central!
 
 The tool:
 - Checks your bulk file's end date (from filename)
-- Blocks optimization if data is <48 hours old
-- You can override this (not recommended)
+- Warns if data appears <48 hours old
+- Continues processing (advisory-only behavior)
 
 **Best Practice**: Wait 48 hours after your data period ends before downloading the bulk file.
 
@@ -235,14 +236,14 @@ Your bulk file must include: Entity, Impressions, Clicks, Spend, Sales, Bid
 
 **Fix**: Download a fresh bulk file from Amazon Seller Central
 
-### "CRITICAL: File within 48 hours" Error
+### "File within 48 hours" Warning
 
 Your file data is too recent (incomplete sales attribution).
 
-**Fix Options**:
+**Best-practice options**:
 1. Wait 48 hours and download a new bulk file
 2. Download a file with an earlier date range
-3. Disable the 48-hour rule in Safety Settings (not recommended)
+3. Continue anyway if you intentionally accept attribution lag
 
 ### No Bid Changes Made
 
@@ -270,11 +271,14 @@ This repo is ready for Streamlit Cloud:
    - Repository: this project
    - Branch: `main`
    - Main file path: `streamlit_app.py`
-3. Deploy.
+3. Ensure `runtime.txt` is present (Python pin for deterministic cloud runtime).
+4. Set `APP_ENV=prod` (recommended) to use production defaults.
+5. Deploy.
 
 Notes:
-- First NLP run may take longer while model files are downloaded.
-- If your cloud environment blocks model download, disable NLP per run.
+- In `prod`, `Run NLP Analysis` defaults to OFF to keep cloud runs lighter and more reliable.
+- Enable NLP per run only when you need clustering/negative recommendation intelligence.
+- First NLP-enabled run may take longer while model files are downloaded.
 
 ## Project Structure
 
@@ -326,7 +330,7 @@ All tests should pass before using the tool on production data.
 
 ✅ **Data Validation**: Checks for required columns before processing
 ✅ **Input Validation**: Rejects invalid configurations
-✅ **48-Hour Rule**: Blocks optimization on incomplete data
+✅ **48-Hour Advisory**: Warns on potentially incomplete data windows
 ✅ **Incremental Changes**: Limits bid swings to ±20%
 ✅ **Min Data Threshold**: Requires >10 clicks for optimization
 ✅ **Fallback Logic**: Uses Ad Group Default Bid when needed

@@ -57,6 +57,16 @@ Use these app settings on Streamlit Cloud:
 
 - Main file path: `streamlit_app.py`
 - Python dependencies: `requirements.txt`
+- Python runtime pin: `runtime.txt` (`python-3.11`)
 - Optional environment variable: `APP_ENV=prod`
 
-If NLP model download is restricted, disable NLP in the sidebar (`Run NLP Analysis`) for those runs.
+Notes:
+- `prod` profile defaults `Run NLP Analysis` to OFF for lighter cloud runs.
+- Enable NLP only when you need clustering/negative recommendations.
+- 48-hour date checking is advisory only; recent files show a warning but runs continue.
+
+## Phase C Smoke Checklist
+
+1. Upload sample bulk file in Streamlit and run optimization.
+2. Download unified export and confirm it opens without worksheet-name errors.
+3. Re-open the export and verify required Amazon upload columns/sheets exist.

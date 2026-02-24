@@ -12,3 +12,8 @@ def test_load_runtime_profile_has_required_fields():
     assert "default_output_dir" in profile
     assert "run_history_path" in profile
     assert "ui" in profile
+
+
+def test_prod_profile_defaults_nlp_off():
+    profile = load_runtime_profile("prod")
+    assert profile["ui"]["run_nlp_analysis"] is False
