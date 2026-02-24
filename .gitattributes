@@ -1,0 +1,22 @@
+* text=auto
+
+# Keep Windows shell scripts with CRLF if needed
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Keep source/docs normalized
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.ini text eol=lf
+
+# Binary files
+*.xlsx binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary

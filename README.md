@@ -338,6 +338,7 @@ All tests should pass before using the tool on production data.
 ## Development
 
 See **docs/CLAUDE.md** for detailed developer instructions.
+For day-to-day commits with GitHub Desktop, use **docs/GITHUB_DESKTOP.md**.
 
 ## License
 

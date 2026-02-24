@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 *.pyd
 *.so
+.python-version
 
 # Virtual environments
 .venv/
@@ -16,12 +17,15 @@ env/
 .ruff_cache/
 coverage/
 .coverage
+htmlcov/
 
 # OS/editor
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # Local assistant/editor config
 .claude/
@@ -34,6 +38,9 @@ build/
 dist/
 *.egg-info/
 
+# Streamlit local secrets/config overrides
+.streamlit/secrets.toml
+
 # Runtime outputs
 outputs/**
 !outputs/.gitkeep
@@ -41,9 +48,15 @@ outputs/**
 # Binary sample data (keep docs, ignore large local files)
 *.xlsx
 !data/samples/.gitkeep
+~$*.xlsx
 
 # Optional env files
 .env
 .env.*
 env/*.env
 !env/*.env.example
+
+# Local misc artifacts
+*.log
+*.tmp
+*.bak
