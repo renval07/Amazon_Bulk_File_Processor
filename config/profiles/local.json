@@ -4,7 +4,7 @@
   "run_history_path": "outputs/run_history.csv",
   "ui": {
     "target_acos": 0.3,
-    "min_bid": 0.1,
+    "min_bid": 0.02,
     "max_bid": 5.0,
     "enforce_48hr_rule": true
   },

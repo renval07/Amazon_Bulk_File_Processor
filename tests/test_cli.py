@@ -13,15 +13,24 @@ def test_cli_parser_defaults():
     assert args.fail_fast is False
     assert args.output_dir is None
     assert args.target_acos == 0.30
-    assert args.min_bid == 0.10
+    assert args.min_bid == 0.02
     assert args.max_bid == 5.00
     assert args.disable_48hr_rule is False
     assert args.skip_nlp is False
+    assert args.negative_keyword_low_intent_only is False
     assert args.bleeder_type_c_mode == "fixed"
     assert args.bleeder_type_c_impressions_threshold == 100
     assert args.bleeder_type_c_percentile == 0.25
     assert args.bleeder_type_c_z_threshold == -1.0
+    assert args.bleeder_segmentation_mode == "none"
+    assert args.segmentation_min_entities == 25
+    assert args.disable_confidence_gating is False
+    assert args.type_a_confidence_level == 0.95
+    assert args.type_b_min_spend == 5.0
     assert args.cold_start_step_up == 0.02
+    assert args.cold_start_mode == "fixed"
+    assert args.cold_start_ladder_cap == 0.08
+    assert args.cold_start_stalled_impressions == 300
     assert args.disable_cold_start is False
 
 

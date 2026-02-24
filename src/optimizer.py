@@ -4,21 +4,32 @@ import re
 import logging
 from datetime import datetime, timedelta
 from io import BytesIO
-from sentence_transformers import SentenceTransformer
-from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score
+
+# Lazy-loaded NLP dependencies.
+# Tests may monkeypatch these symbols directly.
+SentenceTransformer = None
+KMeans = None
+silhouette_score = None
 
 class BulkOptimizer:
     TYPE_A_LABEL = "Low Engagement"
     TYPE_B_LABEL = "High-Cost Non-Converter"
     TYPE_C_LABEL = "Low Visibility"
+    AUTO_TARGET_BUCKETS = {
+        "close-match",
+        "loose-match",
+        "substitutes",
+        "complements",
+        "close match",
+        "loose match",
+    }
 
     def __init__(
         self,
         file_source,
         filename=None,
         target_acos=0.30,
-        min_bid=0.10,
+        min_bid=0.02,
         max_bid=5.00,
         enforce_48hr_rule=True,
         enable_logging=True,
@@ -31,8 +42,16 @@ class BulkOptimizer:
         bleeder_type_c_mode="fixed",
         bleeder_type_c_percentile=0.25,
         bleeder_type_c_z_threshold=-1.0,
+        bleeder_segmentation_mode="none",
+        segmentation_min_entities=25,
+        confidence_enable=True,
+        type_a_confidence_level=0.95,
+        type_b_min_spend=5.0,
         cold_start_step_up_amount=0.02,
         cold_start_enable=True,
+        cold_start_mode="fixed",
+        cold_start_ladder_cap=0.08,
+        cold_start_stalled_impressions=300,
     ):
         # Input validation
         if target_acos <= 0 or target_acos > 1:
@@ -53,10 +72,24 @@ class BulkOptimizer:
             raise ValueError("bleeder_type_b_clicks_std_multiplier must be non-negative")
         if bleeder_type_c_mode not in {"fixed", "percentile", "zscore"}:
             raise ValueError("bleeder_type_c_mode must be one of: fixed, percentile, zscore")
+        if bleeder_segmentation_mode not in {"none", "match_type", "campaign"}:
+            raise ValueError("bleeder_segmentation_mode must be one of: none, match_type, campaign")
+        if segmentation_min_entities <= 0:
+            raise ValueError("segmentation_min_entities must be > 0")
+        if type_a_confidence_level not in {0.80, 0.85, 0.90, 0.95, 0.99}:
+            raise ValueError("type_a_confidence_level must be one of: 0.80, 0.85, 0.90, 0.95, 0.99")
+        if type_b_min_spend < 0:
+            raise ValueError("type_b_min_spend must be non-negative")
         if bleeder_type_c_percentile <= 0 or bleeder_type_c_percentile >= 1:
             raise ValueError("bleeder_type_c_percentile must be between 0 and 1 (exclusive)")
         if cold_start_step_up_amount < 0:
             raise ValueError("cold_start_step_up_amount must be non-negative")
+        if cold_start_mode not in {"fixed", "ladder"}:
+            raise ValueError("cold_start_mode must be one of: fixed, ladder")
+        if cold_start_ladder_cap < 0:
+            raise ValueError("cold_start_ladder_cap must be non-negative")
+        if cold_start_stalled_impressions < 0:
+            raise ValueError("cold_start_stalled_impressions must be non-negative")
 
         self.file_source = file_source
         self.filename = filename or (file_source if isinstance(file_source, str) else "")
@@ -73,8 +106,16 @@ class BulkOptimizer:
         self.bleeder_type_c_mode = bleeder_type_c_mode
         self.bleeder_type_c_percentile = bleeder_type_c_percentile
         self.bleeder_type_c_z_threshold = bleeder_type_c_z_threshold
+        self.bleeder_segmentation_mode = bleeder_segmentation_mode
+        self.segmentation_min_entities = segmentation_min_entities
+        self.confidence_enable = confidence_enable
+        self.type_a_confidence_level = type_a_confidence_level
+        self.type_b_min_spend = type_b_min_spend
         self.cold_start_step_up_amount = cold_start_step_up_amount
         self.cold_start_enable = cold_start_enable
+        self.cold_start_mode = cold_start_mode
+        self.cold_start_ladder_cap = cold_start_ladder_cap
+        self.cold_start_stalled_impressions = cold_start_stalled_impressions
         self.df = None
         self.original_sheets = {}
         self.file_end_date = None
@@ -125,6 +166,85 @@ class BulkOptimizer:
     def get_performance_metrics(self):
         """Returns per-stage performance timings in seconds."""
         return dict(self.performance_metrics)
+
+    @classmethod
+    def _normalized_targeting_expression(cls, series):
+        """Normalizes product targeting expressions for matching/filtering."""
+        return series.fillna('').astype(str).str.strip().str.lower()
+
+    @classmethod
+    def _is_auto_target_bucket(cls, series):
+        normalized = cls._normalized_targeting_expression(series)
+        return normalized.isin(cls.AUTO_TARGET_BUCKETS)
+
+    def _ensure_nlp_dependencies(self):
+        """Loads NLP dependencies on demand to keep startup lightweight."""
+        global SentenceTransformer, KMeans, silhouette_score
+
+        if SentenceTransformer is None:
+            from sentence_transformers import SentenceTransformer as _SentenceTransformer
+
+            SentenceTransformer = _SentenceTransformer
+        if KMeans is None:
+            from sklearn.cluster import KMeans as _KMeans
+
+            KMeans = _KMeans
+        if silhouette_score is None:
+            from sklearn.metrics import silhouette_score as _silhouette_score
+
+            silhouette_score = _silhouette_score
+
+    def _z_score_for_confidence(self, confidence_level):
+        """Maps supported confidence levels to z-scores."""
+        mapping = {
+            0.80: 1.282,
+            0.85: 1.440,
+            0.90: 1.645,
+            0.95: 1.960,
+            0.99: 2.576,
+        }
+        return mapping.get(confidence_level, 1.960)
+
+    def _wilson_upper_bound(self, successes, trials, z):
+        """Vectorized Wilson score upper bound for a binomial proportion."""
+        n = pd.to_numeric(trials, errors="coerce").fillna(0).astype(float)
+        k = pd.to_numeric(successes, errors="coerce").fillna(0).astype(float)
+        p = np.where(n > 0, k / n, 0.0)
+        denom = 1.0 + (z * z / np.maximum(n, 1.0))
+        center = p + (z * z / (2.0 * np.maximum(n, 1.0)))
+        margin = z * np.sqrt((p * (1.0 - p) / np.maximum(n, 1.0)) + (z * z / (4.0 * np.maximum(n, 1.0) ** 2)))
+        upper = (center + margin) / denom
+        return pd.Series(np.where(n > 0, upper, 0.0), index=trials.index if isinstance(trials, pd.Series) else None)
+
+    def _build_bleeder_segment_key(self, df):
+        """Builds a segment key for thresholding stats."""
+        if self.bleeder_segmentation_mode == "none":
+            return pd.Series("__all__", index=df.index, dtype="object")
+
+        if self.bleeder_segmentation_mode == "match_type":
+            if "Match Type" in df.columns:
+                match = df["Match Type"].fillna("unknown").astype(str).str.strip().str.lower()
+                return match.where(match != "", "unknown")
+            return pd.Series("__all__", index=df.index, dtype="object")
+
+        # campaign mode
+        campaign_cols = ["Campaign Name", "Campaign Name (Informational only)"]
+        campaign = pd.Series("unknown_campaign", index=df.index, dtype="object")
+        for col in campaign_cols:
+            if col in df.columns:
+                values = (
+                    df[col]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                    .replace({"nan": "", "NaN": "", "None": "", "none": ""})
+                )
+                campaign = campaign.where(campaign != "unknown_campaign", values.where(values != "", "unknown_campaign"))
+        if "Match Type" in df.columns:
+            match = df["Match Type"].fillna("unknown").astype(str).str.strip().str.lower()
+            match = match.where(match != "", "unknown")
+            return campaign.astype(str) + "|" + match.astype(str)
+        return campaign
 
     def load_data(self):
         """Loads the bulk file and stores original sheets."""
@@ -188,8 +308,8 @@ class BulkOptimizer:
     def check_48_hour_rule(self):
         """
         Checks if the file name implies recent data.
-        Stores date information and returns a warning/error message if detected.
-        If enforce_48hr_rule is True, raises an exception for files within 48 hours.
+        Stores date information and returns a warning message if detected.
+        This is advisory-only and does not block processing.
         """
         # Regex to find date range in filename (e.g., 20251213-20260211)
         match = re.search(r'(\d{8})-(\d{8})', self.filename)
@@ -201,17 +321,12 @@ class BulkOptimizer:
 
                 if self.days_since_file_end < 2:
                     warning_msg = (
-                        f"CRITICAL: The file end date ({end_date_str}) is within the last 48 hours. "
+                        f"WARNING: The file end date ({end_date_str}) is within the last 48 hours. "
                         f"Amazon attribution may be incomplete. This is the #1 cause of bad bid changes. "
                         f"Recommended: Wait {2 - self.days_since_file_end} more day(s) or download an older file."
                     )
-
-                    if self.enforce_48hr_rule:
-                        raise ValueError(warning_msg)
                     return warning_msg
             except ValueError as e:
-                if "CRITICAL" in str(e):
-                    raise  # Re-raise if it's our 48-hour rule error
                 pass
         return None
 
@@ -297,41 +412,73 @@ class BulkOptimizer:
             return {'type_a': 0, 'type_b': 0, 'type_c': 0, 'total': 0}
 
         mask = self.df['Entity'].isin(['Keyword', 'Product Targeting'])
-
-        # Calculate Account-Wide Stats (on active entities only?)
-        # Better to use the whole dataset for Mean/StdDev
         stats_df = self.df[mask].copy()
 
         if stats_df.empty:
             self._log("WARNING: No keywords/targets found for bleeder analysis", level='warning')
             return {'type_a': 0, 'type_b': 0, 'type_c': 0, 'total': 0}
 
-        # CTR Stats
-        # Avoid division by zero for CTR calculation
+        # Reset bleeder/action flags for active entities on each run.
+        if 'Bleeder_Type' not in self.df.columns:
+            self.df['Bleeder_Type'] = ''
+        self.df.loc[mask, 'Bleeder_Type'] = ''
+
+        if 'Cold_Start_Action' not in self.df.columns:
+            self.df['Cold_Start_Action'] = ''
+        self.df.loc[mask, 'Cold_Start_Action'] = ''
+
+        # Build segmentation stats (or account-wide if segmentation disabled/small segment).
         stats_df['Calculated_CTR'] = np.where(stats_df['Impressions'] > 0, stats_df['Clicks'] / stats_df['Impressions'], 0)
-        mean_ctr = stats_df['Calculated_CTR'].mean()
-        std_ctr = stats_df['Calculated_CTR'].std()
-
-        # Clicks Stats (for Zero Sales)
-        mean_clicks = stats_df['Clicks'].mean()
-        std_clicks = stats_df['Clicks'].std()
-
-        # Type A: Irrelevant (Low CTR)
-        # Logic: Impressions > threshold AND Z_CTR < threshold
-        # Z_CTR = (CTR - Mean) / Std
-
-        z_ctr = (stats_df['Calculated_CTR'] - mean_ctr) / (std_ctr + 1e-9) # Avoid div by 0
-
-        type_a_mask = (
-            (mask)
-            & (self.df['Impressions'] > self.bleeder_type_a_impressions_threshold)
-            & (self.df.index.isin(stats_df[z_ctr < self.bleeder_type_a_z_threshold].index))
+        stats_df['_segment_key'] = self._build_bleeder_segment_key(stats_df)
+        segment_stats = stats_df.groupby('_segment_key').agg(
+            segment_count=('Calculated_CTR', 'count'),
+            mean_ctr=('Calculated_CTR', 'mean'),
+            std_ctr=('Calculated_CTR', 'std'),
+            mean_clicks=('Clicks', 'mean'),
+            std_clicks=('Clicks', 'std'),
         )
+        stats_df = stats_df.join(segment_stats, on='_segment_key')
 
-        # Type B: Click-Happy (Wasteful Spend)
-        # Logic: Clicks > (Account Mean + 2*StdDev) AND Sales == 0
-        click_threshold = mean_clicks + (self.bleeder_type_b_clicks_std_multiplier * std_clicks)
-        type_b_mask = (mask) & (self.df['Clicks'] > click_threshold) & (self.df['Sales'] == 0)
+        global_mean_ctr = float(stats_df['Calculated_CTR'].mean())
+        global_std_ctr = float(stats_df['Calculated_CTR'].std())
+        global_mean_clicks = float(stats_df['Clicks'].mean())
+        global_std_clicks = float(stats_df['Clicks'].std())
+
+        small_segment_mask = stats_df['segment_count'] < self.segmentation_min_entities
+        stats_df['eff_mean_ctr'] = np.where(small_segment_mask, global_mean_ctr, stats_df['mean_ctr'])
+        stats_df['eff_std_ctr'] = np.where(small_segment_mask, global_std_ctr, stats_df['std_ctr'])
+        stats_df['eff_mean_clicks'] = np.where(small_segment_mask, global_mean_clicks, stats_df['mean_clicks'])
+        stats_df['eff_std_clicks'] = np.where(small_segment_mask, global_std_clicks, stats_df['std_clicks'])
+
+        z_ctr = (stats_df['Calculated_CTR'] - stats_df['eff_mean_ctr']) / (stats_df['eff_std_ctr'] + 1e-9)
+
+        type_a_candidates = stats_df[
+            (stats_df['Impressions'] > self.bleeder_type_a_impressions_threshold)
+            & (z_ctr < self.bleeder_type_a_z_threshold)
+        ].copy()
+        if self.confidence_enable and not type_a_candidates.empty:
+            z_value = self._z_score_for_confidence(self.type_a_confidence_level)
+            ctr_upper_bound = self._wilson_upper_bound(stats_df['Clicks'], stats_df['Impressions'], z_value)
+            type_a_candidates = type_a_candidates[
+                ctr_upper_bound.loc[type_a_candidates.index] < stats_df.loc[type_a_candidates.index, 'eff_mean_ctr']
+            ]
+        type_a_mask = (mask) & (self.df.index.isin(type_a_candidates.index))
+
+        click_threshold = (
+            stats_df['eff_mean_clicks']
+            + (self.bleeder_type_b_clicks_std_multiplier * stats_df['eff_std_clicks'].fillna(0))
+        )
+        type_b_candidates = stats_df[
+            (stats_df['Clicks'] > click_threshold)
+            & (stats_df['Sales'] == 0)
+        ].copy()
+        if self.confidence_enable and not type_b_candidates.empty:
+            min_clicks = max(3, self.optimization_min_clicks)
+            type_b_candidates = type_b_candidates[
+                (type_b_candidates['Spend'] >= self.type_b_min_spend)
+                & (type_b_candidates['Clicks'] >= min_clicks)
+            ]
+        type_b_mask = (mask) & (self.df.index.isin(type_b_candidates.index))
 
         # Type C: Low volume terms (configurable mode)
         positive_impressions = stats_df[stats_df['Impressions'] > 0]['Impressions']
@@ -369,14 +516,10 @@ class BulkOptimizer:
             )
             type_c_threshold_desc = f"log-impression z < {self.bleeder_type_c_z_threshold:.2f}"
 
-        # Add a flag column for bleeders (for reporting/analysis)
-        if 'Bleeder_Type' not in self.df.columns:
-            self.df['Bleeder_Type'] = ''
-
         # Apply changes
-        type_a_count = type_a_mask.sum()
-        type_b_count = type_b_mask.sum()
-        type_c_count = type_c_mask.sum()
+        type_a_count = int(type_a_mask.sum())
+        type_b_count = int(type_b_mask.sum())
+        type_c_count = int(type_c_mask.sum())
 
         # Apply Type A (Aggressive reduction)
         self.df.loc[type_a_mask, 'Bid'] = self.min_bid
@@ -391,7 +534,7 @@ class BulkOptimizer:
         # Apply Type C (Flag only, no bid change)
         self.df.loc[type_c_mask, 'Bleeder_Type'] = self.TYPE_C_LABEL
 
-        # Cold-start step-up: nudge low-volume terms with zero clicks to gather signal
+        # Cold-start lifecycle: step-up low-volume terms, and flag stalled no-click terms for review.
         cold_start_mask = (
             type_c_mask
             & (self.df['Clicks'] == 0)
@@ -399,17 +542,57 @@ class BulkOptimizer:
             & (~type_a_mask)
             & (~type_b_mask)
         )
-        cold_start_count = int(cold_start_mask.sum())
+        stalled_mask = cold_start_mask & (self.df['Impressions'] >= self.cold_start_stalled_impressions)
+        cold_start_eligible_mask = cold_start_mask & (~stalled_mask)
+        cold_start_count = int(cold_start_eligible_mask.sum())
+        stalled_count = int(stalled_mask.sum())
+
         if self.cold_start_enable and cold_start_count > 0:
-            self.df.loc[cold_start_mask, 'Bid'] = np.clip(
-                self.df.loc[cold_start_mask, 'Bid'] + self.cold_start_step_up_amount,
-                self.min_bid,
-                self.max_bid,
-            )
-            self.df.loc[cold_start_mask, 'Operation'] = 'Update'
+            if self.cold_start_mode == "ladder":
+                threshold = max(float(self.bleeder_type_c_impressions_threshold), 1.0)
+                impressions = self.df.loc[cold_start_eligible_mask, 'Impressions'].clip(lower=0).astype(float)
+                ratio = impressions / threshold
+                multipliers = np.select(
+                    [ratio <= 0.25, ratio <= 0.50, ratio <= 0.75],
+                    [2.0, 1.5, 1.25],
+                    default=1.0,
+                )
+                increments = np.minimum(self.cold_start_step_up_amount * multipliers, self.cold_start_ladder_cap)
+                self.df.loc[cold_start_eligible_mask, 'Bid'] = np.clip(
+                    self.df.loc[cold_start_eligible_mask, 'Bid'] + increments,
+                    self.min_bid,
+                    self.max_bid,
+                )
+                self.df.loc[cold_start_eligible_mask, 'Cold_Start_Action'] = (
+                    "Ladder step-up (+" + pd.Series(increments, index=impressions.index).round(2).astype(str) + ")"
+                )
+            else:
+                self.df.loc[cold_start_eligible_mask, 'Bid'] = np.clip(
+                    self.df.loc[cold_start_eligible_mask, 'Bid'] + self.cold_start_step_up_amount,
+                    self.min_bid,
+                    self.max_bid,
+                )
+                self.df.loc[cold_start_eligible_mask, 'Cold_Start_Action'] = (
+                    f"Fixed step-up (+{self.cold_start_step_up_amount:.2f})"
+                )
+            self.df.loc[cold_start_eligible_mask, 'Operation'] = 'Update'
+
+        if stalled_count > 0:
+            self.df.loc[stalled_mask, 'Cold_Start_Action'] = "Stalled no-click term: review negate/pause"
 
         # Log results
         self._log(f"Bleeder detection complete:")
+        self._log(
+            f"  - Segmentation mode: {self.bleeder_segmentation_mode} "
+            f"(fallback if segment size < {self.segmentation_min_entities})"
+        )
+        if self.confidence_enable:
+            self._log(
+                f"  - Confidence gating: enabled (Type A CI={self.type_a_confidence_level:.2f}, "
+                f"Type B min spend=${self.type_b_min_spend:.2f})"
+            )
+        else:
+            self._log("  - Confidence gating: disabled")
         if type_a_count > 0:
             self._log(f"  - {self.TYPE_A_LABEL}: {type_a_count} keywords reduced to ${self.min_bid}")
         if type_b_count > 0:
@@ -418,9 +601,10 @@ class BulkOptimizer:
             self._log(f"  - {self.TYPE_C_LABEL}: {type_c_count} keywords flagged for testing ({type_c_threshold_desc})")
         if self.cold_start_enable and cold_start_count > 0:
             self._log(
-                f"  - Cold-start step-up: {cold_start_count} low-volume zero-click terms increased by "
-                f"${self.cold_start_step_up_amount:.2f}"
+                f"  - Cold-start step-up ({self.cold_start_mode}): {cold_start_count} low-volume zero-click terms adjusted"
             )
+        if stalled_count > 0:
+            self._log(f"  - Cold-start stalled terms: {stalled_count} flagged for negate/pause review")
 
         if type_a_count + type_b_count + type_c_count == 0:
             self._log("  - No bleeders detected")
@@ -430,6 +614,7 @@ class BulkOptimizer:
             'type_b': type_b_count,
             'type_c': type_c_count,
             'cold_start_stepups': cold_start_count if self.cold_start_enable else 0,
+            'cold_start_stalled': stalled_count,
             'total': type_a_count + type_b_count + type_c_count
         }
 
@@ -496,7 +681,15 @@ class BulkOptimizer:
         self._log(f"Generated Test More report with {len(type_c_keywords)} low-visibility keywords")
         return type_c_keywords
 
-    def save_optimized_file(self, output_path, include_analysis_sheets=True, amazon_upload_ready=False):
+    def save_optimized_file(
+        self,
+        output_path,
+        include_analysis_sheets=True,
+        amazon_upload_ready=False,
+        amazon_updates_only=True,
+        cannibalization_report=None,
+        budget_report=None,
+    ):
         """
         Saves the dataframes back to an Excel file with timestamp.
 
@@ -504,6 +697,9 @@ class BulkOptimizer:
         - output_path: Path to save file (string) or BytesIO object
         - include_analysis_sheets: Include Test More, Cannibalization, Budget reports (default True)
         - amazon_upload_ready: If True, only save sheets Amazon recognizes (default False)
+        - amazon_updates_only: If True with amazon_upload_ready, keep only rows with non-empty Operation
+        - cannibalization_report: Optional precomputed cannibalization DataFrame
+        - budget_report: Optional precomputed budget recommendation DataFrame
 
         If output_path is a string, adds timestamp to filename.
         If output_path is BytesIO, writes directly.
@@ -539,23 +735,44 @@ class BulkOptimizer:
         ]
 
         with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
+            written_sheets = 0
             # Save sheets
             for sheet_name, data in self.original_sheets.items():
                 # If amazon_upload_ready mode, only save Amazon-recognized sheets
                 if amazon_upload_ready:
                     if sheet_name in amazon_sheets:
-                        # CRITICAL: Replace NaN with empty string in Operation column before saving
                         data_to_save = data.copy()
                         if 'Operation' in data_to_save.columns:
-                            data_to_save['Operation'] = data_to_save['Operation'].fillna('')
+                            cleaned_op = (
+                                data_to_save['Operation']
+                                .fillna('')
+                                .astype(str)
+                                .str.strip()
+                                .replace(['nan', 'NaN', 'None', 'none'], '')
+                            )
+                            data_to_save['Operation'] = cleaned_op
+                            if amazon_updates_only:
+                                data_to_save = data_to_save[cleaned_op != '']
+                                if data_to_save.empty and sheet_name != 'Sponsored Products Campaigns':
+                                    continue
+                        elif amazon_updates_only:
+                            # Keep only the primary Sponsored Products sheet (headers only if no operation column).
+                            if sheet_name != 'Sponsored Products Campaigns':
+                                continue
+                            data_to_save = data_to_save.iloc[0:0]
+
                         data_to_save.to_excel(writer, sheet_name=sheet_name, index=False)
-                        self._log(f"Saved '{sheet_name}' sheet (Amazon-compatible)")
+                        written_sheets += 1
+                        self._log(
+                            f"Saved '{sheet_name}' sheet (Amazon-compatible, {len(data_to_save)} rows)"
+                        )
                 else:
                     # Also clean Operation column for non-Amazon sheets
                     data_to_save = data.copy()
                     if 'Operation' in data_to_save.columns:
                         data_to_save['Operation'] = data_to_save['Operation'].fillna('')
                     data_to_save.to_excel(writer, sheet_name=sheet_name, index=False)
+                    written_sheets += 1
 
             # Add analysis sheets only if requested and not in Amazon upload mode
             if include_analysis_sheets and not amazon_upload_ready:
@@ -566,28 +783,43 @@ class BulkOptimizer:
                     self._log(f"Added 'Test More Report' sheet with {len(test_more_report)} ghost keywords")
 
                 # Add Cannibalization Report if duplicates exist
-                cannibalization_report = self.detect_cannibalization()
-                if not cannibalization_report.empty:
-                    cannibalization_report.to_excel(writer, sheet_name='Cannibalization Report', index=False)
-                    self._log(f"Added 'Cannibalization Report' sheet with {len(cannibalization_report)} duplicate keywords")
+                local_cannibalization = (
+                    cannibalization_report if cannibalization_report is not None else self.detect_cannibalization()
+                )
+                if not local_cannibalization.empty:
+                    local_cannibalization.to_excel(writer, sheet_name='Cannibalization Report', index=False)
+                    self._log(f"Added 'Cannibalization Report' sheet with {len(local_cannibalization)} duplicate keywords")
 
                 # Add Budget Optimization Report
-                budget_report = self.optimize_budgets()
-                if not budget_report.empty:
-                    budget_report.to_excel(writer, sheet_name='Budget Recommendations', index=False)
-                    self._log(f"Added 'Budget Recommendations' sheet with {len(budget_report)} campaigns analyzed")
+                local_budget_report = budget_report if budget_report is not None else self.optimize_budgets()
+                if not local_budget_report.empty:
+                    local_budget_report.to_excel(writer, sheet_name='Budget Recommendations', index=False)
+                    self._log(f"Added 'Budget Recommendations' sheet with {len(local_budget_report)} campaigns analyzed")
 
         if amazon_upload_ready:
-            self._log("File saved in Amazon upload-ready format (only Amazon-recognized sheets)")
+            if amazon_updates_only:
+                self._log(
+                    f"File saved in Amazon upload-ready format (updated entries only across {written_sheets} sheet(s))"
+                )
+            else:
+                self._log("File saved in Amazon upload-ready format (only Amazon-recognized sheets)")
         else:
             self._log("File saved with all sheets including analysis reports")
 
         # Return the output path for reference
         return output_path
 
-    def generate_markdown_report(self, include_nlp=True):
+    def generate_markdown_report(
+        self,
+        include_nlp=True,
+        cannibalization=None,
+        budget_recs=None,
+        product_results=None,
+        cluster_results=None,
+    ):
         """
         Generates a comprehensive markdown report with all optimization results.
+        Optional precomputed analysis objects can be provided to avoid recomputation.
         Returns: String containing formatted markdown
         """
         self._log("Generating markdown report...")
@@ -624,7 +856,7 @@ class BulkOptimizer:
         report += "\n---\n\n## 🏗️ Structural Analysis\n\n"
 
         # Cannibalization
-        cannibalization = self.detect_cannibalization()
+        cannibalization = cannibalization if cannibalization is not None else self.detect_cannibalization()
         if not cannibalization.empty:
             report += f"### ⚠️ Cannibalization Issues ({len(cannibalization)} found)\n\n"
             report += "Keywords appearing in multiple ad groups (causing internal competition):\n\n"
@@ -645,7 +877,7 @@ class BulkOptimizer:
             report += "### ✅ No Cannibalization Issues\n\nYour account structure is optimal - no duplicate keywords found across ad groups.\n"
 
         # Budget optimization
-        budget_recs = self.optimize_budgets()
+        budget_recs = budget_recs if budget_recs is not None else self.optimize_budgets()
         if not budget_recs.empty:
             report += f"\n### 💰 Budget Optimization ({len(budget_recs)} campaigns)\n\n"
 
@@ -690,7 +922,7 @@ class BulkOptimizer:
 
             # Product Target Analysis
             try:
-                product_results = self.analyze_product_targets()
+                product_results = product_results if product_results is not None else self.analyze_product_targets()
                 bleeder_counts = product_results.get('bleeder_counts', {})
                 negative_recs = product_results.get('negative_recommendations', pd.DataFrame())
                 savings = product_results.get('savings_estimate', 0)
@@ -727,7 +959,7 @@ class BulkOptimizer:
 
             # Search Term Clustering
             try:
-                cluster_results = self.cluster_search_terms()
+                cluster_results = cluster_results if cluster_results is not None else self.cluster_search_terms()
                 n_clusters = cluster_results.get('n_clusters', 0)
                 cluster_summary = cluster_results.get('cluster_summary', pd.DataFrame())
 
@@ -1085,6 +1317,8 @@ class BulkOptimizer:
         # Filter to product targets only (where Product Targeting ID is not null)
         product_target_mask = df_search['Product Targeting ID'].notna()
         df_products = df_search[product_target_mask].copy()
+        auto_target_mask = self._is_auto_target_bucket(df_products['Product Targeting Expression'])
+        df_products['Is_Auto_Target_Bucket'] = auto_target_mask
 
         if len(df_products) == 0:
             self._log("No product targeting data found - only keywords present")
@@ -1207,8 +1441,16 @@ class BulkOptimizer:
         self._log(f"  - Type D (Insufficient Data): {bleeder_counts['type_d']} ASINs")
 
         # Generate negative recommendations (Type B only - most urgent)
-        negative_recs = df_products[df_products['Bleeder_Type'] == 'Type B: Non-Converting'].copy()
+        # Exclude auto-target buckets (close/loose/substitutes/complements), which are not valid negative product targets.
+        negative_recs = df_products[
+            (df_products['Bleeder_Type'] == 'Type B: Non-Converting') &
+            (~df_products['Is_Auto_Target_Bucket'])
+        ].copy()
         negative_recs = negative_recs.sort_values('Severity_Score', ascending=False)
+        excluded_auto_recs = (
+            (df_products['Bleeder_Type'] == 'Type B: Non-Converting') &
+            (df_products['Is_Auto_Target_Bucket'])
+        ).sum()
 
         # Estimate monthly savings from blocking Type B bleeders
         # Assuming current data is for ~60 days (based on typical bulk file date ranges)
@@ -1222,6 +1464,10 @@ class BulkOptimizer:
             self._log(f"  - {len(negative_recs)} ASINs recommended for negative targeting")
             self._log(f"  - Total wasted spend: ${type_b_spend:,.2f}")
             self._log(f"  - Estimated monthly savings: ${monthly_savings:,.2f}")
+        if excluded_auto_recs > 0:
+            self._log(
+                f"  - Excluded {excluded_auto_recs} auto-target bucket rows from negative product recommendations"
+            )
 
         return {
             'bleeder_counts': bleeder_counts,
@@ -1319,6 +1565,7 @@ class BulkOptimizer:
 
         # Generate embeddings using sentence-transformers
         try:
+            self._ensure_nlp_dependencies()
             self._log("Loading NLP model (this may take a moment on first run)...")
             model = SentenceTransformer('all-MiniLM-L6-v2')  # Lightweight, fast model
             self._log("Generating embeddings...")
@@ -1445,6 +1692,24 @@ class BulkOptimizer:
             empty_df.to_excel(output_buffer, index=False, sheet_name='Negative Product Targets')
             return output_buffer
 
+        auto_bucket_mask = self._is_auto_target_bucket(recommendations_df['Product Targeting Expression'])
+        if auto_bucket_mask.any():
+            excluded = int(auto_bucket_mask.sum())
+            recommendations_df = recommendations_df[~auto_bucket_mask].copy()
+            self._log(
+                f"Excluded {excluded} auto-target bucket rows from negative product export"
+            )
+
+        if len(recommendations_df) == 0:
+            self._log("No valid negative product target recommendations to export after filtering")
+            empty_df = pd.DataFrame(columns=[
+                'Product', 'Entity', 'Operation', 'Campaign ID', 'Ad Group ID',
+                'Campaign Name (Informational only)', 'Ad Group Name (Informational only)',
+                'Product Targeting Expression', 'Match Type'
+            ])
+            empty_df.to_excel(output_buffer, index=False, sheet_name='Negative Product Targets')
+            return output_buffer
+
         self._log(f"Exporting {len(recommendations_df)} negative product targets for Amazon upload...")
 
         # Create DataFrame in Amazon bulk format
@@ -1474,7 +1739,15 @@ class BulkOptimizer:
         self._log(f"Negative product targets export complete: {len(negative_upload)} rows")
         return output_buffer
 
-    def export_negative_keywords_bulk_file(self, cluster_results, output_buffer, min_spend=10, max_acos=1.5, match_type='Negative Exact'):
+    def export_negative_keywords_bulk_file(
+        self,
+        cluster_results,
+        output_buffer,
+        min_spend=10,
+        max_acos=1.5,
+        match_type='Negative Exact',
+        require_low_intent_cluster=False,
+    ):
         """
         Export negative keyword recommendations based on clustering analysis.
 
@@ -1486,6 +1759,7 @@ class BulkOptimizer:
             min_spend: Minimum spend to consider for negative keyword (default: $10)
             max_acos: Maximum ACOS threshold - terms above this are candidates (default: 150%)
             match_type: 'Negative Exact' or 'Negative Phrase' (default: Negative Exact)
+            require_low_intent_cluster: If True, only terms from Low-Performing intent clusters are exported.
 
         Returns:
             BytesIO buffer with Excel file ready for Amazon upload
@@ -1496,7 +1770,8 @@ class BulkOptimizer:
             self._log("No search term clusters to analyze for negative keywords")
             # Return empty file
             empty_df = pd.DataFrame(columns=[
-                'Product', 'Entity', 'Operation', 'Campaign Name', 'Ad Group Name',
+                'Product', 'Entity', 'Operation', 'Campaign ID', 'Ad Group ID',
+                'Campaign Name', 'Ad Group Name',
                 'Keyword Text', 'Match Type'
             ])
             empty_df.to_excel(output_buffer, index=False, sheet_name='Negative Keywords')
@@ -1509,10 +1784,36 @@ class BulkOptimizer:
             ((clusters_df['ACOS'] > max_acos) | (clusters_df['Sales'] == 0))
         ].copy()
 
+        if require_low_intent_cluster:
+            cluster_summary_df = cluster_results.get('cluster_summary', pd.DataFrame())
+            if (
+                not cluster_summary_df.empty
+                and 'Cluster' in negative_candidates.columns
+                and {'Cluster', 'Performance_Category'}.issubset(cluster_summary_df.columns)
+            ):
+                cluster_perf = cluster_summary_df[['Cluster', 'Performance_Category']].drop_duplicates('Cluster')
+                negative_candidates = negative_candidates.merge(
+                    cluster_perf,
+                    on='Cluster',
+                    how='left',
+                )
+                negative_candidates = negative_candidates[
+                    negative_candidates['Performance_Category'] == 'Low-Performing Intent'
+                ]
+                self._log(
+                    f"Filtered negative candidates to low-performing intent clusters: {len(negative_candidates)} terms remain"
+                )
+            else:
+                self._log(
+                    "Low-intent cluster filtering requested but cluster summary/labels unavailable; using term-level thresholds",
+                    level='warning',
+                )
+
         if len(negative_candidates) == 0:
             self._log("No search terms meet negative keyword criteria (all performing well!)")
             empty_df = pd.DataFrame(columns=[
-                'Product', 'Entity', 'Operation', 'Campaign Name', 'Ad Group Name',
+                'Product', 'Entity', 'Operation', 'Campaign ID', 'Ad Group ID',
+                'Campaign Name', 'Ad Group Name',
                 'Keyword Text', 'Match Type'
             ])
             empty_df.to_excel(output_buffer, index=False, sheet_name='Negative Keywords')
@@ -1537,7 +1838,16 @@ class BulkOptimizer:
 
         # Merge to get campaign/ad group details
         negative_with_details = negative_candidates.merge(
-            df_search[['Customer Search Term', 'Campaign Name (Informational only)', 'Ad Group Name (Informational only)', 'Ad_Type']],
+            df_search[
+                [
+                    'Customer Search Term',
+                    'Campaign ID',
+                    'Ad Group ID',
+                    'Campaign Name (Informational only)',
+                    'Ad Group Name (Informational only)',
+                    'Ad_Type',
+                ]
+            ],
             left_on='Customer Search Term',
             right_on='Customer Search Term',
             how='left'
@@ -1545,8 +1855,20 @@ class BulkOptimizer:
 
         # Remove duplicates (same search term may appear in multiple ad groups)
         negative_with_details = negative_with_details.drop_duplicates(
-            subset=['Customer Search Term', 'Campaign Name (Informational only)', 'Ad Group Name (Informational only)']
+            subset=['Customer Search Term', 'Campaign ID', 'Ad Group ID']
         )
+        # Amazon requires parent IDs for create operations on negative keywords.
+        negative_with_details = negative_with_details[
+            negative_with_details['Campaign ID'].notna() & negative_with_details['Ad Group ID'].notna()
+        ]
+        if len(negative_with_details) == 0:
+            self._log("No negative keywords with valid Campaign ID + Ad Group ID")
+            empty_df = pd.DataFrame(columns=[
+                'Product', 'Entity', 'Operation', 'Campaign ID', 'Ad Group ID',
+                'Campaign Name', 'Ad Group Name', 'Keyword Text', 'Match Type'
+            ])
+            empty_df.to_excel(output_buffer, index=False, sheet_name='Negative Keywords')
+            return output_buffer
 
         # Create DataFrame in Amazon bulk format
         negative_upload = pd.DataFrame()
@@ -1554,6 +1876,8 @@ class BulkOptimizer:
         negative_upload['Product'] = negative_with_details['Ad_Type']
         negative_upload['Entity'] = 'Negative Keyword'
         negative_upload['Operation'] = 'Create'
+        negative_upload['Campaign ID'] = negative_with_details['Campaign ID']
+        negative_upload['Ad Group ID'] = negative_with_details['Ad Group ID']
         negative_upload['Campaign Name'] = negative_with_details['Campaign Name (Informational only)']
         negative_upload['Ad Group Name'] = negative_with_details['Ad Group Name (Informational only)']
         negative_upload['Keyword Text'] = negative_with_details['Customer Search Term']

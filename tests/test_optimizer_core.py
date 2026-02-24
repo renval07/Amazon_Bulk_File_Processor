@@ -68,6 +68,10 @@ def test_input_validation_rejects_invalid_values(sample_file_path):
         BulkOptimizer(str(sample_file_path), bleeder_type_c_mode="unknown")
     with pytest.raises(ValueError):
         BulkOptimizer(str(sample_file_path), bleeder_type_c_percentile=1.5)
+    with pytest.raises(ValueError):
+        BulkOptimizer(str(sample_file_path), bleeder_segmentation_mode="bad_mode")
+    with pytest.raises(ValueError):
+        BulkOptimizer(str(sample_file_path), cold_start_mode="bad_mode")
 
 
 def test_performance_metrics_record_and_read(optimizer):

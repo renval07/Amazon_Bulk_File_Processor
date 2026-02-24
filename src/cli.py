@@ -60,12 +60,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.30,
         help="Target ACOS as decimal (default: 0.30 for 30%%)",
     )
-    parser.add_argument("--min-bid", type=float, default=0.10, help="Minimum bid floor")
+    parser.add_argument("--min-bid", type=float, default=0.02, help="Minimum bid floor")
     parser.add_argument("--max-bid", type=float, default=5.00, help="Maximum bid ceiling")
     parser.add_argument(
         "--disable-48hr-rule",
         action="store_true",
-        help="Disable 48-hour attribution safety rule",
+        help="Deprecated: 48-hour check is advisory-only and no longer blocks runs",
     )
     parser.add_argument(
         "--skip-nlp",
@@ -97,6 +97,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Max ACOS threshold for negative keyword recommendations (default: 1.5 = 150%%)",
     )
     parser.add_argument(
+        "--negative-keyword-low-intent-only",
+        action="store_true",
+        help="Only export negative keywords from Low-Performing intent clusters",
+    )
+    parser.add_argument(
         "--bleeder-type-c-mode",
         choices=["fixed", "percentile", "zscore"],
         default="fixed",
@@ -121,10 +126,58 @@ def build_parser() -> argparse.ArgumentParser:
         help="Type C zscore mode cutoff on log impressions (default: -1.0)",
     )
     parser.add_argument(
+        "--bleeder-segmentation-mode",
+        choices=["none", "match_type", "campaign"],
+        default="none",
+        help="Segment Type A/B baselines (default: none)",
+    )
+    parser.add_argument(
+        "--segmentation-min-entities",
+        type=int,
+        default=25,
+        help="Fallback to account-wide stats for segments below this size (default: 25)",
+    )
+    parser.add_argument(
+        "--disable-confidence-gating",
+        action="store_true",
+        help="Disable confidence checks for Type A/B bleeder decisions",
+    )
+    parser.add_argument(
+        "--type-a-confidence-level",
+        type=float,
+        choices=[0.80, 0.85, 0.90, 0.95, 0.99],
+        default=0.95,
+        help="Wilson confidence level for Type A low-CTR gating (default: 0.95)",
+    )
+    parser.add_argument(
+        "--type-b-min-spend",
+        type=float,
+        default=5.0,
+        help="Minimum spend for Type B non-converter action when confidence gating is enabled",
+    )
+    parser.add_argument(
         "--cold-start-step-up",
         type=float,
         default=0.02,
         help="Cold-start bid increase for low-volume zero-click terms (default: 0.02)",
+    )
+    parser.add_argument(
+        "--cold-start-mode",
+        choices=["fixed", "ladder"],
+        default="fixed",
+        help="Cold-start progression mode (default: fixed)",
+    )
+    parser.add_argument(
+        "--cold-start-ladder-cap",
+        type=float,
+        default=0.08,
+        help="Maximum ladder increment per run (default: 0.08)",
+    )
+    parser.add_argument(
+        "--cold-start-stalled-impressions",
+        type=int,
+        default=300,
+        help="Impression threshold for stalled no-click escalation flag (default: 300)",
     )
     parser.add_argument(
         "--disable-cold-start",
@@ -158,8 +211,16 @@ def _run_single_file(args: argparse.Namespace, input_path: Path, output_dir: Pat
             bleeder_type_c_impressions_threshold=args.bleeder_type_c_impressions_threshold,
             bleeder_type_c_percentile=args.bleeder_type_c_percentile,
             bleeder_type_c_z_threshold=args.bleeder_type_c_z_threshold,
+            bleeder_segmentation_mode=args.bleeder_segmentation_mode,
+            segmentation_min_entities=args.segmentation_min_entities,
+            confidence_enable=not args.disable_confidence_gating,
+            type_a_confidence_level=args.type_a_confidence_level,
+            type_b_min_spend=args.type_b_min_spend,
             cold_start_step_up_amount=args.cold_start_step_up,
             cold_start_enable=not args.disable_cold_start,
+            cold_start_mode=args.cold_start_mode,
+            cold_start_ladder_cap=args.cold_start_ladder_cap,
+            cold_start_stalled_impressions=args.cold_start_stalled_impressions,
         )
 
         warning = optimizer.check_48_hour_rule()
@@ -217,7 +278,11 @@ def _run_single_file(args: argparse.Namespace, input_path: Path, output_dir: Pat
             str(amazon_path), include_analysis_sheets=False, amazon_upload_ready=True
         )
         final_analysis_path = optimizer.save_optimized_file(
-            str(analysis_path), include_analysis_sheets=True, amazon_upload_ready=False
+            str(analysis_path),
+            include_analysis_sheets=True,
+            amazon_upload_ready=False,
+            cannibalization_report=cannibalization,
+            budget_report=budget_recs,
         )
 
         output_paths = [Path(final_amazon_path), Path(final_analysis_path), report_path, log_path]
@@ -239,6 +304,7 @@ def _run_single_file(args: argparse.Namespace, input_path: Path, output_dir: Pat
                 negative_keywords_buffer,
                 min_spend=args.negative_keyword_min_spend,
                 max_acos=args.negative_keyword_max_acos,
+                require_low_intent_cluster=args.negative_keyword_low_intent_only,
             )
             negative_keywords_path.write_bytes(negative_keywords_buffer.getvalue())
             output_paths.extend([negative_products_path, negative_keywords_path])
@@ -248,7 +314,13 @@ def _run_single_file(args: argparse.Namespace, input_path: Path, output_dir: Pat
         for stage_name, duration in stage_timings.items():
             optimizer.record_stage_timing(stage_name, duration)
 
-        markdown_report = optimizer.generate_markdown_report(include_nlp=not args.skip_nlp)
+        markdown_report = optimizer.generate_markdown_report(
+            include_nlp=not args.skip_nlp,
+            cannibalization=cannibalization,
+            budget_recs=budget_recs,
+            product_results=product_target_results,
+            cluster_results=search_term_clusters,
+        )
         report_path.write_text(markdown_report, encoding="utf-8")
         log_path.write_text(optimizer.get_optimization_log(), encoding="utf-8")
 
@@ -260,7 +332,8 @@ def _run_single_file(args: argparse.Namespace, input_path: Path, output_dir: Pat
             f"A={bleeder_results.get('type_a', 0)}, "
             f"B={bleeder_results.get('type_b', 0)}, "
             f"C={bleeder_results.get('type_c', 0)}, "
-            f"ColdStart={bleeder_results.get('cold_start_stepups', 0)}"
+            f"ColdStart={bleeder_results.get('cold_start_stepups', 0)}, "
+            f"ColdStartStalled={bleeder_results.get('cold_start_stalled', 0)}"
         )
         print(f"  Cannibalization issues: {len(cannibalization)}")
         print(f"  Campaigns analyzed for budgets: {len(budget_recs)}")

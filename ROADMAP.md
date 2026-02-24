@@ -103,3 +103,6 @@ Exit Criteria:
 - 2026-02-24: Added collapsible "View Bid Optimization Details" table in Streamlit for row-level update review.
 - 2026-02-24: Added Streamlit Cloud entrypoint/config (`streamlit_app.py`, `.streamlit/config.toml`) and deployment documentation updates.
 - 2026-02-24: Added `docs/OUTPUT_IMPROVEMENTS.md` with data-driven improvement opportunities from live-file validation.
+- 2026-02-24: Completed pre-deployment technical/PPC audit and published `docs/PREDEPLOY_AUDIT.md` with prioritized hardening plan.
+- 2026-02-24: Completed Phase A hardening pass: lazy NLP dependency loading, precomputed analysis reuse in exports/reports, Streamlit session-state result caching, and pytest archive isolation.
+- 2026-02-24: Started Phase B with segmented bleeder baselines, confidence gating, ladder/stalled cold-start lifecycle controls, and low-intent-cluster filtering for negative keyword exports (UI/CLI + tests).
