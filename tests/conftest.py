@@ -8,7 +8,7 @@ from src.optimizer import BulkOptimizer
 @pytest.fixture
 def sample_file_path() -> Path:
     samples_dir = Path(__file__).resolve().parents[1] / "data" / "samples"
-    preferred = samples_dir / "bulk-a2kk083uqnb8ha-20251213-20260211-1770782206348 (1).xlsx"
+    preferred = samples_dir / "bulk-a1qcnuwp2122gg-20260125-20260224-1771933499436.xlsx"
     if preferred.exists():
         return preferred
 
